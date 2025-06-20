@@ -108,7 +108,7 @@ class StegAnalyzer:
             return {
                 "session_id": session_id,
                 "results": results,
-                "report_path": report["path"],
+                "report_path": report.get("path", "No report generated"),
                 "dashboard_url": self.dashboard.url if self.config.dashboard.enabled else None
             }
             
@@ -149,7 +149,7 @@ class StegAnalyzer:
                 "session_id": session_id,
                 "total_files": results["total_files"],
                 "results": results["results"],
-                "report_path": report["path"],
+                "report_path": report.get("path", "No report generated"),
                 "dashboard_url": self.dashboard.url if self.config.dashboard.enabled else None
             }
             
@@ -167,7 +167,10 @@ class StegAnalyzer:
             return await self.get_session_results(session_id)
         
         # Restore configuration
-        self.config.update(session["config"])
+        config_data = session["config"]
+        if isinstance(config_data, str):
+            config_data = json.loads(config_data)
+        self.config.update(config_data)
         
         # Start dashboard
         if self.config.dashboard.enabled:
@@ -185,7 +188,7 @@ class StegAnalyzer:
                 return {
                     "session_id": session_id,
                     "results": results,
-                    "report_path": report["path"],
+                    "report_path": report.get("path", "No report generated"),
                     "dashboard_url": self.dashboard.url if self.config.dashboard.enabled else None
                 }
         finally:
@@ -204,7 +207,7 @@ class StegAnalyzer:
                 "session_id": session_id,
                 "files_processed": 0,
                 "results": [],
-                "report_path": report["path"]
+                "report_path": report.get("path", "No report generated")
             }
         
         # Continue processing
@@ -230,7 +233,7 @@ class StegAnalyzer:
             "session_id": session_id,
             "files_processed": len(incomplete_files),
             "results": results,
-            "report_path": report["path"]
+            "report_path": report.get("path", "No report generated")
         }
     
     async def get_session_results(self, session_id: str) -> Dict[str, Any]:

@@ -651,7 +651,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 await websocket.receive_text()
                 
         except WebSocketDisconnect:
-            self.active_connections.remove(websocket)
+            if websocket in self.active_connections:
+                self.active_connections.remove(websocket)
         except Exception as e:
             self.logger.error(f"WebSocket error: {e}")
             if websocket in self.active_connections:

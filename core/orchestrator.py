@@ -146,6 +146,7 @@ class StegOrchestrator:
         try:
             # Basic file analysis first
             file_info = await self.file_analyzer.analyze_file(file_path)
+            file_info["file_path"] = str(file_path)
             await self.db.store_file_analysis(session_id, file_info)
             
             # Create analysis plan based on file type
@@ -303,7 +304,7 @@ class StegOrchestrator:
         task_map = {task.method: task for task in tasks}
         
         # Execute tasks in dependency order
-        max_concurrent = self.config.performance.max_concurrent_tasks
+        max_concurrent = self.config.orchestrator.max_cpu_workers
         semaphore = asyncio.Semaphore(max_concurrent)
         
         async def execute_task(task: AnalysisTask):
@@ -430,9 +431,6 @@ class StegOrchestrator:
         correlated = await self._correlate_findings(results)
         
         # Update graph tracker
-        await self.graph_tracker.update_analysis_graph(session_id, results)
-        
-        # Add summary statistics
         summary = {
             'total_findings': len(results),
             'high_confidence': len(high_confidence),
@@ -490,7 +488,7 @@ class StegOrchestrator:
         self.logger.info(f"Found {len(files)} files to analyze")
         
         # Analyze files in batches
-        batch_size = self.config.performance.max_concurrent_files
+        batch_size = self.config.orchestrator.max_concurrent_files
         all_results = []
         
         for i in range(0, len(files), batch_size):
