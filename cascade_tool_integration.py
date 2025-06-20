@@ -1,444 +1,438 @@
 #!/usr/bin/env python3
 """
-Cascade Analyzer Tool - Integrated into StegAnalyzer Framework
-Recursive steganography analysis using zsteg + binwalk
+Cascade Integration Script – Ensures extracted items go through full pipeline
 """
-
-import os
-import subprocess
-import tempfile
-import shutil
+import re
 from pathlib import Path
-import hashlib
-import json
-import time
-import logging
-from typing import Dict, List, Set, Any, Optional, Tuple
+import shutil
+
+def main():
+    """Integrate cascading analysis into the main analyzer pipeline."""
+    print("🔧 Integrating cascading analysis system...")
+    project_root = Path(".")
+
+    # Step 1: Fix database storage (if needed)
+    fix_database_storage(project_root)
+
+    # Step 2: Add cascading analysis module
+    add_cascading_module(project_root)
+
+    # Step 3: Integrate cascade option with main script
+    integrate_with_main(project_root)
+
+    print("✅ Integration complete!\n")
+    print("🚀 NEW CAPABILITIES:")
+    print("   • Deep recursive extraction with automatic analysis of each extracted file")
+    print("   • File tree visualization of embedded content")
+    print("   • Handles thousands of nested files (configurable depth and file limits)\n")
+    print("🎯 USAGE:")
+    print("   python3 steg_main.py <file> --cascade")
+    print("   python3 steg_main.py <file> --cascade --max-depth 10 --max-files 5000\n")
+
+def fix_database_storage(project_root: Path):
+    """Fix the database storage method to accept cascade results properly."""
+    print("🗄️  Fixing database storage...")
+    db_file = project_root / "core" / "database.py"
+    if not db_file.exists():
+        print("   ⚠️  Database file not found, skipping DB fix.")
+        return
+
+    with open(db_file, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    # Identify the broken store_analysis_result (if it has a missing argument issue)
+    if 'async def store_analysis_result' in content and 'await self.store_finding(' in content:
+        # Replace the entire store_analysis_result method with corrected version
+        method_pattern = r'    async def store_analysis_result\(.*?\):.*?(?=\n    async def|\n    def|\nclass|\Z)'
+        new_method = '''    async def store_analysis_result(self, session_id: str, method: str, results: list):
+        """Store analysis results from tools (fixed version)"""
+        if not results:
+            return
+        try:
+            # Determine file_id for this session (last inserted file)
+            file_id = None
+            if self.db_type == "sqlite":
+                cursor = self.sqlite_conn.cursor()
+                cursor.execute("SELECT id FROM files WHERE session_id = ? ORDER BY created_at DESC LIMIT 1", (session_id,))
+                row = cursor.fetchone()
+                file_id = row[0] if row else None
+                if not file_id:
+                    self.logger.warning(f"No file record found for session {session_id}")
+                    return
+            # Store each result as a finding linked to the file
+            for result in results:
+                if isinstance(result, dict):
+                    await self.store_finding(session_id, file_id, result)
+        except Exception as e:
+            self.logger.error(f"Error storing analysis results for method {method}: {e}")'''
+        patched_content = re.sub(method_pattern, new_method, content, flags=re.DOTALL)
+        if patched_content != content:
+            with open(db_file, 'w', encoding='utf-8') as f:
+                f.write(patched_content)
+            print("   ✅ Database storage method updated.")
+    else:
+        print("   ℹ️  Database storage method already up-to-date or not applicable.")
+
+def add_cascading_module(project_root: Path):
+    """Add the CascadingAnalyzer module for recursive cascade analysis."""
+    print("🌳 Adding cascading analysis module...")
+    core_dir = project_root / "core"
+    core_dir.mkdir(exist_ok=True)
+    cascading_file = core_dir / "cascading_analyzer.py"
+
+    # Define the CascadingAnalyzer code
+    cascading_code = r'''"""
+Cascading Analysis Module – Deep recursive steganography analyzer
+Automatically extracts hidden files and analyzes each with the full pipeline.
+"""
+import asyncio, logging, shutil, tempfile, json, hashlib, time, subprocess
+from pathlib import Path
+from typing import Dict, List, Any, Set, Optional
 from dataclasses import dataclass, asdict
-from collections import defaultdict
 
 @dataclass
-class CascadeResult:
-    """Result of cascade analysis"""
-    file_path: str
+class ExtractionNode:
+    """Represents a file (and its findings) in the extraction tree."""
+    file_path: Path
+    parent_path: Optional[Path]
+    extraction_method: str  # how this file was extracted
+    tool_name: str          # which tool extracted it (or 'user_input' for root)
+    depth: int
     file_hash: str
     file_size: int
-    depth: int
-    parent_hash: Optional[str]
-    extraction_method: str
-    zsteg_results: List[Dict]
-    binwalk_results: List[Dict]
-    extracted_files: List[str]
-    analysis_time: float
-    file_type: str
+    mime_type: str
+    children: List["ExtractionNode"]
+    findings: List[Dict[str, Any]]
+    extracted_at: float
 
-class CascadeAnalyzer:
-    """Cascade analyzer integrated with StegAnalyzer framework"""
-    
-    def __init__(self, config):
-        self.config = config
+class CascadingAnalyzer:
+    def __init__(self, orchestrator, output_dir: Path = None, max_depth: int = 15, max_files: int = 10000):
+        self.orchestrator = orchestrator
         self.logger = logging.getLogger(__name__)
-        
-        # Cascade-specific config
-        if hasattr(config, 'cascade'):
-            self.max_depth = config.cascade.max_depth
-            self.enable_zsteg = config.cascade.enable_zsteg
-            self.enable_binwalk = config.cascade.enable_binwalk
-            self.save_extracts = config.cascade.save_extracts
-        else:
-            # Default settings
-            self.max_depth = 10
-            self.enable_zsteg = True
-            self.enable_binwalk = True
-            self.save_extracts = True
-        
-        # Tracking
-        self.analyzed_hashes: Set[str] = set()
-        self.results: List[CascadeResult] = []
-        self.file_tree: Dict[str, List[str]] = defaultdict(list)
-        
-        # Tool availability
-        self.zsteg_available = self._check_tool_availability('zsteg')
-        self.binwalk_available = self._check_tool_availability('binwalk')
-        
-        if not self.zsteg_available:
-            self.logger.warning("zsteg not available - skipping zsteg analysis")
-        if not self.binwalk_available:
-            self.logger.warning("binwalk not available - skipping binwalk analysis")
-        
-        # Comprehensive zsteg parameters
-        self.zsteg_params = self._generate_zsteg_parameters()
-        
-        # Supported file extensions
-        self.image_extensions = {'.png', '.bmp', '.gif', '.tiff', '.tif', '.webp'}
-        self.binwalk_extensions = {
-            '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.tif', '.webp',
-            '.pdf', '.zip', '.rar', '.7z', '.tar', '.gz', '.exe', '.bin',
-            '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx'
-        }
-    
-    def _check_tool_availability(self, tool_name: str) -> bool:
-        """Check if external tool is available"""
-        try:
-            subprocess.run([tool_name, '--help'], 
-                         capture_output=True, timeout=5)
-            return True
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            return False
-    
-    def _generate_zsteg_parameters(self) -> List[List[str]]:
-        """Generate comprehensive zsteg parameter combinations"""
-        params = []
-        
-        # Basic LSB parameters
-        channels = ['r', 'g', 'b', 'rgb', 'bgr', 'a', 'rg', 'rb', 'gb', 'rgba', 'bgra']
-        bit_orders = ['msb', 'lsb']
-        bit_planes = ['0', '1', '2', '3', '4', '5', '6', '7']
-        
-        # Standard bitplane analysis
-        for channel in channels:
-            for order in bit_orders:
-                for plane in bit_planes:
-                    params.append([f'{channel}{order}', f'{plane}'])
-        
-        # Exotic parameters
-        exotic_params = [
-            # Different color spaces
-            ['xyY', 'lsb', '1'], ['Lab', 'lsb', '1'], ['YUV', 'lsb', '1'],
-            ['HSV', 'lsb', '1'], ['HSL', 'lsb', '1'],
-            
-            # Inverted bits
-            ['inv', 'r', 'lsb', '1'], ['inv', 'g', 'lsb', '1'], ['inv', 'b', 'lsb', '1'],
-            
-            # Prime patterns
-            ['prime', 'r', 'lsb'], ['prime', 'g', 'lsb'], ['prime', 'b', 'lsb'],
-            
-            # XOR patterns
-            ['xor', 'r', 'lsb', '1'], ['xor', 'g', 'lsb', '1'], ['xor', 'b', 'lsb', '1'],
-            
-            # Different byte orders
-            ['b1,r,lsb,xy'], ['b2,g,lsb,xy'], ['b3,b,lsb,xy'], ['b4,a,lsb,xy'],
-            
-            # Row/column patterns
-            ['B1,rgb,lsb,xy'], ['B2,rgb,lsb,xy'], ['B3,rgb,lsb,xy'], ['B4,rgb,lsb,xy'],
-        ]
-        
-        params.extend(exotic_params)
-        
-        # Add more exotic combinations
-        for i in range(1, 8):
-            params.extend([
-                [f'b{i},r,lsb,xy'], [f'b{i},g,lsb,xy'], 
-                [f'b{i},b,lsb,xy'], [f'b{i},rgb,lsb,xy']
-            ])
-        
-        return params
-    
-    def _get_file_hash(self, file_path: Path) -> str:
-        """Calculate SHA256 hash of file"""
-        sha256_hash = hashlib.sha256()
-        with open(file_path, "rb") as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(chunk)
-        return sha256_hash.hexdigest()
-    
-    def _get_file_type(self, file_path: Path) -> str:
-        """Get file type using file command"""
-        try:
-            result = subprocess.run(['file', '-b', str(file_path)], 
-                                  capture_output=True, text=True, timeout=10)
-            return result.stdout.strip() if result.returncode == 0 else "unknown"
-        except:
-            return "unknown"
-    
-    def _run_zsteg_analysis(self, file_path: Path) -> List[Dict]:
-        """Run comprehensive zsteg analysis"""
-        if not self.enable_zsteg or not self.zsteg_available:
-            return []
-        
-        if file_path.suffix.lower() not in self.image_extensions:
-            return []
-        
-        results = []
-        self.logger.info(f"Running zsteg analysis on {file_path.name} with {len(self.zsteg_params)} parameter sets")
-        
-        for i, params in enumerate(self.zsteg_params):
-            try:
-                cmd = ['zsteg'] + params + [str(file_path)]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-                
-                if result.stdout.strip():
-                    results.append({
-                        'params': ' '.join(params),
-                        'output': result.stdout.strip(),
-                        'command': ' '.join(cmd),
-                        'success': True,
-                        'confidence': self._calculate_zsteg_confidence(result.stdout)
-                    })
-                    self.logger.debug(f"zsteg found data with params: {' '.join(params)}")
-                
-                # Progress logging
-                if (i + 1) % 100 == 0:
-                    self.logger.info(f"Tested {i + 1}/{len(self.zsteg_params)} zsteg parameter combinations")
-                    
-            except subprocess.TimeoutExpired:
-                self.logger.debug(f"zsteg timeout with params: {' '.join(params)}")
-                continue
-            except Exception as e:
-                self.logger.debug(f"zsteg error with params {' '.join(params)}: {e}")
-                continue
-        
-        self.logger.info(f"zsteg analysis complete: {len(results)} results found")
-        return results
-    
-    def _calculate_zsteg_confidence(self, output: str) -> float:
-        """Calculate confidence score for zsteg output"""
-        # Basic scoring based on output characteristics
-        score = 0.3  # Base score
-        
-        # Higher confidence for readable text
-        if any(keyword in output.lower() for keyword in ['flag', 'key', 'password', 'secret']):
-            score += 0.4
-        
-        # Higher confidence for file signatures
-        if any(sig in output for sig in ['PNG', 'JPEG', 'PDF', 'ZIP']):
-            score += 0.3
-        
-        # Length factor
-        if len(output) > 50:
-            score += 0.2
-        
-        return min(score, 1.0)
-    
-    def _run_binwalk_analysis(self, file_path: Path, output_dir: Path) -> List[Dict]:
-        """Run binwalk extraction and analysis"""
-        if not self.enable_binwalk or not self.binwalk_available:
-            return []
-        
-        results = []
-        self.logger.info(f"Running binwalk analysis on {file_path.name}")
-        
-        try:
-            # Create extraction directory
-            extract_dir = output_dir / f"binwalk_{file_path.stem}_{int(time.time())}"
-            extract_dir.mkdir(exist_ok=True)
-            
-            # Run binwalk extraction
-            cmd = ['binwalk', '-e', '-C', str(extract_dir), str(file_path)]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            
-            # Find extracted files
-            extracted_files = []
-            if extract_dir.exists():
-                for extracted_file in extract_dir.rglob('*'):
-                    if extracted_file.is_file() and extracted_file.stat().st_size > 0:
-                        extracted_files.append(str(extracted_file))
-            
-            results.append({
-                'command': ' '.join(cmd),
-                'output': result.stdout.strip(),
-                'extracted_files': extracted_files,
-                'extract_dir': str(extract_dir),
-                'success': result.returncode == 0,
-                'file_count': len(extracted_files)
-            })
-            
-            self.logger.info(f"binwalk extracted {len(extracted_files)} files")
-            
-        except subprocess.TimeoutExpired:
-            self.logger.warning(f"binwalk timeout on {file_path.name}")
-        except Exception as e:
-            self.logger.error(f"binwalk error: {e}")
-        
-        return results
-    
-    def _extract_zsteg_data(self, zsteg_results: List[Dict], file_path: Path, output_dir: Path) -> List[str]:
-        """Extract embedded data found by zsteg"""
-        if not self.save_extracts:
-            return []
-        
-        extracted_files = []
-        
-        for i, result in enumerate(zsteg_results):
-            if not result['success'] or result['confidence'] < 0.5:
-                continue
-                
-            try:
-                params = result['params'].split()
-                extract_file = output_dir / f"zsteg_extract_{file_path.stem}_{i}.bin"
-                
-                cmd = ['zsteg', '-E'] + params + [str(file_path)]
-                
-                with open(extract_file, 'wb') as f:
-                    subprocess.run(cmd, stdout=f, timeout=30)
-                
-                if extract_file.exists() and extract_file.stat().st_size > 0:
-                    extracted_files.append(str(extract_file))
-                    self.logger.debug(f"Extracted zsteg data to {extract_file.name}")
-                
-            except Exception as e:
-                self.logger.debug(f"Failed to extract zsteg data with params {result['params']}: {e}")
-                continue
-        
-        return extracted_files
-    
-    async def cascade_analyze(self, file_path: Path, session_id: str = None) -> List[Dict[str, Any]]:
-        """Main cascade analysis method - StegAnalyzer compatible"""
-        results = []
-        
-        try:
-            # Create output directory
-            output_dir = Path(tempfile.mkdtemp(prefix="cascade_"))
-            
-            # Start recursive analysis
-            cascade_result = self._analyze_file_recursive(file_path, 0, None, output_dir)
-            
-            # Convert to StegAnalyzer result format
-            for result in self.results:
-                steg_result = {
-                    "type": "cascade_analysis",
-                    "method": "recursive_cascade",
-                    "tool_name": "cascade_analyzer",
-                    "confidence": self._calculate_overall_confidence(result),
-                    "details": f"Cascade analysis at depth {result.depth}",
-                    "file_path": result.file_path,
-                    "file_hash": result.file_hash,
-                    "depth": result.depth,
-                    "parent_hash": result.parent_hash,
-                    "zsteg_findings": len(result.zsteg_results),
-                    "binwalk_extractions": len(result.extracted_files),
-                    "analysis_time": result.analysis_time,
-                    "extracted_files": result.extracted_files,
-                    "cascade_tree": dict(self.file_tree)
-                }
-                results.append(steg_result)
-        
-        except Exception as e:
-            self.logger.error(f"Cascade analysis failed: {e}")
-            results.append({
-                "type": "cascade_error",
-                "method": "recursive_cascade",
-                "tool_name": "cascade_analyzer",
-                "confidence": 0.0,
-                "details": f"Cascade analysis failed: {str(e)}",
-                "file_path": str(file_path)
-            })
-        
-        return results
-    
-    def _calculate_overall_confidence(self, result: CascadeResult) -> float:
-        """Calculate overall confidence for cascade result"""
-        confidence = 0.0
-        
-        # Base confidence for finding anything
-        if result.zsteg_results or result.extracted_files:
-            confidence = 0.3
-        
-        # Zsteg confidence
-        if result.zsteg_results:
-            zsteg_confidence = max(r.get('confidence', 0.0) for r in result.zsteg_results)
-            confidence = max(confidence, zsteg_confidence)
-        
-        # File extraction bonus
-        if result.extracted_files:
-            confidence += min(len(result.extracted_files) * 0.1, 0.4)
-        
-        # Depth penalty (deeper = less certain)
-        depth_penalty = result.depth * 0.05
-        confidence = max(0.0, confidence - depth_penalty)
-        
-        return min(confidence, 1.0)
-    
-    def _analyze_file_recursive(self, file_path: Path, depth: int, parent_hash: Optional[str], output_dir: Path) -> Optional[CascadeResult]:
-        """Recursive file analysis"""
-        if depth > self.max_depth:
-            self.logger.info(f"Max depth {self.max_depth} reached for {file_path.name}")
-            return None
-        
-        if not file_path.exists():
-            return None
-        
-        # Check if already analyzed
-        file_hash = self._get_file_hash(file_path)
-        if file_hash in self.analyzed_hashes:
-            self.logger.debug(f"Already analyzed: {file_path.name}")
-            return None
-        
-        self.analyzed_hashes.add(file_hash)
-        self.logger.info(f"Analyzing {file_path.name} at depth {depth}")
-        
-        start_time = time.time()
-        
-        # Create analysis directory
-        analysis_dir = output_dir / f"depth_{depth}" / file_hash[:8]
-        analysis_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Run analyses
-        zsteg_results = self._run_zsteg_analysis(file_path)
-        binwalk_results = self._run_binwalk_analysis(file_path, analysis_dir)
-        
-        # Extract embedded data
-        zsteg_extracted = self._extract_zsteg_data(zsteg_results, file_path, analysis_dir)
-        
-        # Collect all extracted files
-        all_extracted = zsteg_extracted.copy()
-        for binwalk_result in binwalk_results:
-            all_extracted.extend(binwalk_result.get('extracted_files', []))
-        
-        # Create result
-        result = CascadeResult(
-            file_path=str(file_path),
+        self.output_dir = output_dir or Path(tempfile.mkdtemp(prefix="cascading_analysis_"))
+        self.extraction_tree: Optional[ExtractionNode] = None
+        self.processed_hashes: Set[str] = set()
+        self.max_depth = max_depth
+        self.max_files = max_files
+        self.total_files_processed = 0
+
+        print(f"🌳 CascadingAnalyzer initialized (max_depth={max_depth}, max_files={max_files})")
+        print(f"   📁 Output directory: {self.output_dir}")
+
+    async def analyze_cascading(self, initial_file: Path, session_id: str) -> ExtractionNode:
+        """Start the cascading analysis from an initial file."""
+        print(f"\\n🚀 Starting cascade analysis for {initial_file} ...")
+        # Create the root extraction node
+        file_hash = self._calculate_hash(initial_file)
+        root_node = ExtractionNode(
+            file_path=initial_file,
+            parent_path=None,
+            extraction_method="initial",
+            tool_name="user_input",
+            depth=0,
             file_hash=file_hash,
-            file_size=file_path.stat().st_size,
-            depth=depth,
-            parent_hash=parent_hash,
-            extraction_method="root" if depth == 0 else "cascade",
-            zsteg_results=zsteg_results,
-            binwalk_results=binwalk_results,
-            extracted_files=all_extracted,
-            analysis_time=time.time() - start_time,
-            file_type=self._get_file_type(file_path)
+            file_size=initial_file.stat().st_size if initial_file.exists() else 0,
+            mime_type=self._get_mime_type(initial_file),
+            children=[],
+            findings=[],
+            extracted_at=time.time()
         )
-        
-        self.results.append(result)
-        
-        # Update file tree
-        if parent_hash:
-            self.file_tree[parent_hash].append(file_hash)
-        
-        # Recursively analyze extracted files
-        for extracted_file_path in all_extracted:
-            extracted_path = Path(extracted_file_path)
-            if extracted_path.exists() and extracted_path.is_file():
-                self._analyze_file_recursive(extracted_path, depth + 1, file_hash, output_dir)
-        
-        return result
-    
-    def get_analysis_methods(self) -> List[str]:
-        """Return available analysis methods"""
-        methods = ["cascade_analyze"]
-        if self.zsteg_available:
-            methods.append("zsteg_comprehensive")
-        if self.binwalk_available:
-            methods.append("binwalk_extraction")
-        return methods
-    
-    def get_tool_info(self) -> Dict[str, Any]:
-        """Get tool information"""
-        return {
-            "name": "CascadeAnalyzer",
-            "version": "1.0.0",
-            "description": "Recursive steganography analysis with zsteg and binwalk",
-            "capabilities": [
-                "Recursive file extraction",
-                "Comprehensive zsteg parameter testing",
-                "Binwalk file carving",
-                "Extraction tree mapping"
-            ],
-            "requirements": {
-                "zsteg": self.zsteg_available,
-                "binwalk": self.binwalk_available
-            },
-            "max_depth": self.max_depth,
-            "zsteg_parameters": len(self.zsteg_params)
+        self.extraction_tree = root_node
+        self.processed_hashes.add(file_hash)
+
+        # Analyze the root file with full pipeline, then recursively extract/analyze children
+        await self._analyze_node_recursive(root_node, session_id)
+
+        # After recursion, print and save the extraction tree
+        self._print_extraction_tree()
+        await self._save_extraction_tree()
+        return self.extraction_tree
+
+    async def _analyze_node_recursive(self, node: ExtractionNode, session_id: str):
+        """Recursively analyze a node: run full analysis, extract children, and repeat."""
+        if node.depth >= self.max_depth:
+            print(f"   ⚠️  Max depth {self.max_depth} reached at {node.file_path}")
+            return
+        if self.total_files_processed >= self.max_files:
+            print(f"   ⚠️  Reached max files limit ({self.max_files}), stopping recursion.")
+            return
+
+        self.total_files_processed += 1
+        indent = "  " * node.depth
+        print(f"{indent}🔍 Analyzing {node.file_path.name} (depth {node.depth}, size {node.file_size} bytes)")
+
+        try:
+            # 1. Run the standard analysis pipeline on this file
+            results = await self.orchestrator.analyze(node.file_path, session_id)
+            node.findings.extend(results or [])
+            if results:
+                print(f"{indent}   ↪️ Collected {len(results)} findings from main analysis")
+
+            # 2. Extract embedded files using various tools
+            extracted_files = await self._extract_files_from(node)
+            if extracted_files:
+                print(f"{indent}   ✅ Extracted {len(extracted_files)} file(s) from {node.file_path.name}")
+            else:
+                print(f"{indent}   ⚪ No embedded files found in {node.file_path.name}")
+
+            # 3. Recurse into each extracted file
+            for info in extracted_files:
+                child = await self._create_child_node(node, info)
+                if child:
+                    node.children.append(child)
+                    await self._analyze_node_recursive(child, session_id)
+        except Exception as e:
+            print(f"{indent}   ❌ Error analyzing {node.file_path.name}: {e}")
+
+    async def _extract_files_from(self, node: ExtractionNode) -> List[Dict[str, Any]]:
+        """Try extracting embedded files from the given node using multiple tools."""
+        extracted = []
+        work_dir = self.output_dir / f"depth_{node.depth}" / node.file_path.stem
+        work_dir.mkdir(parents=True, exist_ok=True)
+        # Define extraction methods to apply
+        extractors = {
+            'binwalk': self._run_binwalk,
+            'steghide': self._run_steghide,
+            'zsteg': self._run_zsteg,
+            'foremost': self._run_foremost
         }
+        for tool, func in extractors.items():
+            try:
+                new_files = await func(node.file_path, work_dir / tool)
+                if new_files:
+                    extracted.extend(new_files)
+            except Exception as ex:
+                self.logger.debug(f"Extractor {tool} failed: {ex}")
+        return extracted
+
+    async def _create_child_node(self, parent: ExtractionNode, info: Dict[str, Any]) -> Optional[ExtractionNode]:
+        """Create an ExtractionNode for a newly extracted file."""
+        path = Path(info['file_path'])
+        if not path.exists() or path.stat().st_size == 0:
+            return None
+        # Avoid processing the same file twice (by content hash)
+        file_hash = self._calculate_hash(path)
+        if file_hash in self.processed_hashes:
+            return None
+        self.processed_hashes.add(file_hash)
+        return ExtractionNode(
+            file_path=path,
+            parent_path=parent.file_path,
+            extraction_method=info.get('method', 'unknown'),
+            tool_name=info.get('tool', 'unknown'),
+            depth=parent.depth + 1,
+            file_hash=file_hash,
+            file_size=path.stat().st_size,
+            mime_type=self._get_mime_type(path),
+            children=[],
+            findings=[],
+            extracted_at=time.time()
+        )
+
+    # Extraction tool implementations:
+    async def _run_binwalk(self, file_path: Path, out_dir: Path) -> List[Dict[str, Any]]:
+        """Extract using binwalk."""
+        out_dir.mkdir(parents=True, exist_ok=True)
+        extracted = []
+        try:
+            cmd = ['binwalk', '--extract', '--directory', str(out_dir), str(file_path)]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if result.returncode == 0:
+                # Collect all files extracted by binwalk
+                for item in out_dir.rglob('*'):
+                    if item.is_file() and item.stat().st_size > 0:
+                        extracted.append({
+                            'file_path': str(item),
+                            'method': 'binwalk_extraction',
+                            'tool': 'binwalk'
+                        })
+        except Exception:
+            pass
+        return extracted
+
+    async def _run_steghide(self, file_path: Path, out_dir: Path) -> List[Dict[str, Any]]:
+        """Extract using steghide (with a small dictionary of passwords)."""
+        out_dir.mkdir(parents=True, exist_ok=True)
+        extracted = []
+        passwords = ["", "password", "secret", "hidden", "flag", "ctf", "123456"]
+        for i, pwd in enumerate(passwords):
+            try:
+                output_file = out_dir / f"steghide_out_{i}.dat"
+                cmd = ['steghide', 'extract', '-sf', str(file_path), '-xf', str(output_file), '-p', pwd]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode == 0 and output_file.exists() and output_file.stat().st_size > 0:
+                    extracted.append({
+                        'file_path': str(output_file),
+                        'method': 'steghide_extraction',
+                        'tool': 'steghide'
+                    })
+                    break  # stop after first successful extraction
+            except Exception:
+                continue
+        return extracted
+
+    async def _run_zsteg(self, file_path: Path, out_dir: Path) -> List[Dict[str, Any]]:
+        """Extract data using zsteg (for image files)."""
+        out_dir.mkdir(parents=True, exist_ok=True)
+        extracted = []
+        try:
+            # Run zsteg in verbose mode to list potential data (limit to first 10 findings)
+            result = subprocess.run(['zsteg', '--all', str(file_path)], capture_output=True, text=True, timeout=60)
+            if result.stdout:
+                lines = result.stdout.splitlines()
+                for i, line in enumerate(lines[:10]):  # consider first 10 possible extractions
+                    if ':' in line:
+                        # Each line like "b1,rgb,lsb,xy : <data>" – extract with that parameter
+                        param = line.split(':', 1)[0].strip()
+                        output_file = out_dir / f"zsteg_{i}.dat"
+                        try:
+                            extract_cmd = ['zsteg', '-E', param, str(file_path)]
+                            extract_proc = subprocess.run(extract_cmd, capture_output=True, timeout=30)
+                            data = extract_proc.stdout
+                            if data and len(data) > 0:
+                                with open(output_file, 'wb') as f:
+                                    f.write(data)
+                                if output_file.stat().st_size > 0:
+                                    extracted.append({
+                                        'file_path': str(output_file),
+                                        'method': f'zsteg[{param}]',
+                                        'tool': 'zsteg'
+                                    })
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+        return extracted
+
+    async def _run_foremost(self, file_path: Path, out_dir: Path) -> List[Dict[str, Any]]:
+        """Carve out files using foremost."""
+        out_dir.mkdir(parents=True, exist_ok=True)
+        extracted = []
+        try:
+            cmd = ['foremost', '-i', str(file_path), '-o', str(out_dir)]
+            subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            # Collect carved files (foremost sorts by file type folders)
+            for item in out_dir.rglob('*'):
+                if item.is_file() and item.stat().st_size > 0:
+                    extracted.append({
+                        'file_path': str(item),
+                        'method': 'foremost_carving',
+                        'tool': 'foremost'
+                    })
+        except Exception:
+            pass
+        return extracted
+
+    def _calculate_hash(self, file_path: Path) -> str:
+        """Calculate a short SHA-256 hash of a file (for deduplication)."""
+        try:
+            sha = hashlib.sha256()
+            with open(file_path, 'rb') as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    sha.update(chunk)
+            return sha.hexdigest()[:16]
+        except Exception:
+            return "unknown"
+
+    def _get_mime_type(self, file_path: Path) -> str:
+        """Get MIME type of the file (if python-magic is available)."""
+        try:
+            import magic
+            return magic.from_file(str(file_path), mime=True)
+        except Exception:
+            return "unknown"
+
+    def _print_extraction_tree(self):
+        """Print the hierarchical tree of extracted files and findings."""
+        print(f"\\n🌳 **Extraction Tree** (Total files processed: {self.total_files_processed})")
+        print("-" * 60)
+        if not self.extraction_tree:
+            return
+        def print_node(node: ExtractionNode, prefix: str = ""):
+            size = node.file_size
+            size_str = f"{size:,} bytes" if size < 1024*1024 else f"{size/1024**2:.1f} MB"
+            finding_count = len(node.findings)
+            find_str = f"{finding_count} finding(s)" if finding_count else "no findings"
+            print(f"{prefix}- {node.file_path.name} [{node.tool_name}] ({size_str}, {find_str})")
+            # Print a couple of findings for context
+            for f in node.findings[:2]:
+                ftype = f.get('type', 'finding')
+                conf = f.get('confidence', 0)
+                print(f"{prefix}  * {ftype} (confidence {conf:.2f})")
+            if len(node.findings) > 2:
+                print(f"{prefix}  * ... ({len(node.findings) - 2} more findings)")
+            # Recurse into children
+            for child in node.children:
+                print_node(child, prefix + "    ")
+        print_node(self.extraction_tree)
+
+    async def _save_extraction_tree(self):
+        """Save the extraction tree structure and findings to a JSON file."""
+        if not self.extraction_tree:
+            return
+        tree_path = self.output_dir / "extraction_tree.json"
+        def node_to_dict(node: ExtractionNode) -> dict:
+            data = asdict(node)
+            data['file_path'] = str(node.file_path)
+            data['parent_path'] = str(node.parent_path) if node.parent_path else None
+            data['children'] = [node_to_dict(c) for c in node.children]
+            return data
+        with open(tree_path, 'w') as f:
+            json.dump(node_to_dict(self.extraction_tree), f, indent=2)
+        print(f"💾 Extraction tree saved to {tree_path}")
+'''
+    # Write the cascading analyzer module to file
+    with open(cascading_file, 'w', encoding='utf-8') as f:
+        f.write(cascading_code)
+    print(f"   ✅ Created {cascading_file.name}")
+
+def integrate_with_main(project_root: Path):
+    """Integrate cascade option into the main CLI script (steg_main.py)."""
+    print("🔗 Integrating cascading analysis into steg_main.py...")
+    main_file = project_root / "steg_main.py"
+    if not main_file.exists():
+        print("   ⚠️  Main script steg_main.py not found, skipping CLI integration.")
+        return
+
+    with open(main_file, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    # 1. Add CLI arguments for cascade if not present
+    if '--cascade' not in content:
+        args_insertion = (
+            '    parser.add_argument("--cascade", action="store_true", help="Enable recursive cascade analysis")\n'
+            '    parser.add_argument("--max-depth", type=int, default=10, help="Maximum extraction depth for cascade")\n'
+            '    parser.add_argument("--max-files", type=int, default=5000, help="Maximum number of files to process in cascade")'
+        )
+        # Insert after the verbose argument definition
+        content = re.sub(r'parser\.add_argument\("--verbose".*?\n', 
+                         lambda m: m.group(0) + args_insertion + "\n", content, count=1)
+
+    # 2. Ensure CascadingAnalyzer is imported
+    if 'from core.cascading_analyzer import CascadingAnalyzer' not in content:
+        content = content.replace('from core.orchestrator import StegOrchestrator\n', 
+                                  'from core.orchestrator import StegOrchestrator\nfrom core.cascading_analyzer import CascadingAnalyzer\n')
+
+    # 3. Add logic in main() to invoke cascade analysis after normal analysis
+    if 'if args.cascade' not in content:
+        pattern = r'if target_path\.is_file\(\):\s*results = await analyzer\.analyze_file\([^)]*\)'
+        replacement = (
+            'if target_path.is_file():\n'
+            '            results = await analyzer.analyze_file(str(target_path))\n'
+            '            \n'
+            '            # If cascade mode, perform deep analysis on extracted files\n'
+            '            if args.cascade:\n'
+            '                print("\\n🌳 Starting cascading analysis...")\n'
+            '                casc = CascadingAnalyzer(analyzer.orchestrator, max_depth=args.max_depth, max_files=args.max_files)\n'
+            '                tree = await casc.analyze_cascading(target_path, results["session_id"])\n'
+            '                print("🎉 Cascade analysis complete. See extraction_tree.json for details.")'
+        )
+        content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+
+    # Write the updated main file
+    with open(main_file, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print("   ✅ steg_main.py updated with cascade integration")
+
+if __name__ == "__main__":
+    main()

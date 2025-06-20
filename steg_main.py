@@ -278,6 +278,8 @@ async def main():
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     parser.add_argument("--check-system", action="store_true", help="Check system requirements")
     parser.add_argument('--cascade', action='store_true', help='Enable recursive cascade analysis (zsteg+binwalk)')
+    parser.add_argument("--max-depth", type=int, default=10, help="Max recursion depth for cascade analysis")
+    parser.add_argument("--max-files", type=int, default=5000, help="Max number of files to process during cascade")
     
     args = parser.parse_args()
     
@@ -342,7 +344,21 @@ async def main():
         
         target_path = Path(args.target)
         if target_path.is_file():
-            results = await analyzer.analyze_file(args.target, args.output)
+            results = await analyzer.analyze_file(str(target_path))
+            
+            # If cascade mode, perform deep analysis on extracted files
+            if args.cascade:
+                try:
+                    print("Starting cascading analysis...")
+                    casc = CascadingAnalyzer(analyzer.orchestrator, max_depth=args.max_depth, max_files=args.max_files)
+                    tree = await casc.analyze_cascading(target_path, results["session_id"])
+                    print("Cascade analysis complete. See extraction_tree.json for details.")
+                except Exception as e:
+                    print(f"Error during cascade analysis: {e}")
+                print("Starting cascading analysis...")
+                casc = CascadingAnalyzer(analyzer.orchestrator, max_depth=args.max_depth, max_files=args.max_files)
+                tree = await casc.analyze_cascading(target_path, results["session_id"])
+                print("🎉 Cascade analysis complete. See extraction_tree.json for details.")
         elif target_path.is_dir():
             results = await analyzer.analyze_directory(args.target)
         else:

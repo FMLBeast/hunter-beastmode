@@ -16,7 +16,7 @@ import multiprocessing as mp
 from core.file_analyzer import FileAnalyzer
 from core.graph_tracker import GraphTracker
 from utils.checkpoint import CheckpointManager
-from tools.cascade_analyzer import CascadeAnalyzer
+from core.cascading_analyzer import CascadingAnalyzer
 # Tool imports with graceful handling
 try:
     from tools.classic_stego import ClassicStegoTools
@@ -113,7 +113,7 @@ class StegOrchestrator:
         # Initialize tool managers (only if available)
         self.classic_tools = ClassicStegoTools(config) if ClassicStegoTools else None
         self.image_tools = ImageForensicsTools(config) if ImageForensicsTools else None
-        self.audio_tools = AudioAnalysisTools(config) if AudioAnalysisTools else None
+        self.audio_tools = AudioAnalysisTools(config, None) if AudioAnalysisTools else None        
         self.file_tools = FileForensicsTools(config) if FileForensicsTools else None
         self.crypto_tools = CryptoAnalysisTools(config) if CryptoAnalysisTools else None
         self.metadata_tools = MetadataCarving(config) if MetadataCarving else None
