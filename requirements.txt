@@ -32,7 +32,6 @@ torch>=1.10.0  # PyTorch for GPU acceleration
 torchvision>=0.11.0
 tensorflow>=2.7.0  # TensorFlow alternative
 transformers>=4.15.0  # Hugging Face models
-timm>=0.6.0  # PyTorch Image Models
 
 # GPU support (optional)
 pynvml>=11.4.1  # NVIDIA GPU monitoring
@@ -45,11 +44,13 @@ openai>=0.27.0  # GPT API
 # Cryptography and security
 cryptography>=3.4.0
 pycryptodome>=3.12.0
+hashlib-compat>=1.0.0
+ssdeep>=3.4  # Fuzzy hashing (optional, may need compilation)
 
 # Image processing
 imageio>=2.9.0
 scikit-image>=0.18.0
-pytesseract>=0.3.8  # OCR support (optional)
+pytesseract>=3.8.0  # OCR support (optional)
 
 # Audio processing (optional)
 librosa>=0.8.1
@@ -118,33 +119,36 @@ memory-profiler>=0.60.0
 line-profiler>=3.5.0
 py-spy>=0.3.11
 
+# Alternative implementations for specific features
+# Uncomment if you need specific functionality:
+
 # Neo4j graph database support
-neo4j>=4.4.0
+# neo4j>=4.4.0
 
 # Redis caching
-redis>=4.1.0
-aioredis>=2.0.0
+# redis>=4.1.0
+# aioredis>=2.0.0
 
 # Advanced ML libraries
-xgboost>=1.5.0
-lightgbm>=3.3.0
-catboost>=1.0.0
+# xgboost>=1.5.0
+# lightgbm>=3.3.0
+# catboost>=1.0.0
 
 # Computer vision
-face-recognition>=1.3.0
-dlib>=19.22.0
+# face-recognition>=1.3.0
+# dlib>=19.22.0
 
 # Natural language processing
-spacy>=3.2.0
-nltk>=3.7
+# spacy>=3.2.0
+# nltk>=3.7
 
 # Time series analysis
-pandas>=1.3.0
-statsmodels>=0.13.0
+# pandas>=1.3.0
+# statsmodels>=0.13.0
 
 # Parallel processing
-joblib>=1.1.0
-dask>=2021.12.0
+# joblib>=1.1.0
+# dask>=2021.12.0
 
 # Cloud storage
 # boto3>=1.20.0  # AWS S3

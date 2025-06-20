@@ -13,32 +13,20 @@ import argparse
 import json
 from datetime import datetime
 
-# Import core components
 from core.orchestrator import StegOrchestrator
 from config.steg_config import Config
 from core.database import DatabaseManager
-
-# Optional imports with graceful handling
-try:
-    from core.dashboard import Dashboard
-except ImportError as e:
-    print(f"Warning: Dashboard not available: {e}")
-    Dashboard = None
-
-try:
-    from core.reporter import ReportGenerator
-except ImportError as e:
-    print(f"Warning: ReportGenerator not available: {e}")
-    ReportGenerator = None
+from core.dashboard import Dashboard
+from core.reporter import ReportGenerator
+import logging
 
 def setup_logging(level=logging.INFO):
-    """Setup logging configuration"""
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(levelname)s %(name)s - %(message)s"
     )
     logging.getLogger("steg_main").info("Logging initialized.")
-
+    
 class SystemChecker:
     @staticmethod
     async def check_all():
@@ -51,7 +39,7 @@ class SystemChecker:
             "gpu": {"available": False, "cuda": False}
         }
         
-        # Check external tools
+        # Check tools
         import subprocess
         tools = ["steghide", "outguess", "zsteg", "binwalk", "exiftool", "strings"]
         for tool in tools:
@@ -82,32 +70,12 @@ class SystemChecker:
 
 class StegAnalyzer:
     def __init__(self, config_path: str = "config/default.json"):
-        """Initialize StegAnalyzer with proper configuration handling"""
         self.config = Config(config_path)
+        self.db = DatabaseManager(self.config.database)
+        self.orchestrator = StegOrchestrator(self.config, self.db)
+        self.dashboard = Dashboard(self.config, self.db)
+        self.reporter = ReportGenerator(self.config, self.db)
         self.logger = logging.getLogger(__name__)
-        
-        # Convert config to dict for components that need it
-        config_dict = self.config.to_dict()
-        
-        # Initialize database with proper config
-        db_config = config_dict.get("database", {"type": "sqlite", "path": "data/steganalyzer.db"})
-        self.db = DatabaseManager(db_config)
-        
-        # Initialize orchestrator with full config dict and database instance
-        self.orchestrator = StegOrchestrator(config_dict, self.db)
-        
-        # Initialize optional components
-        if Dashboard:
-            self.dashboard = Dashboard(config_dict, self.db)
-        else:
-            self.dashboard = None
-            
-        if ReportGenerator:
-            self.reporter = ReportGenerator(config_dict, self.db)
-        else:
-            self.reporter = None
-        
-        self.logger.info("StegAnalyzer initialized successfully")
         
     async def analyze_file(self, file_path: str, target_dir: str = None) -> Dict[str, Any]:
         """Analyze a single file for steganographic content"""
@@ -124,128 +92,70 @@ class StegAnalyzer:
         
         self.logger.info(f"Starting analysis session {session_id} for {file_path}")
         
-        # Start dashboard if enabled and available
-        dashboard_url = None
-        if self.dashboard and self.config.dashboard.enabled:
-            try:
-                await self.dashboard.start(session_id)
-                dashboard_url = f"http://{self.config.dashboard.host}:{self.config.dashboard.port}"
-            except Exception as e:
-                self.logger.warning(f"Could not start dashboard: {e}")
+        # Start dashboard if enabled
+        if self.config.dashboard.enabled:
+            await self.dashboard.start(session_id)
         
         try:
             # Run orchestrated analysis
             results = await self.orchestrator.analyze(file_path, session_id)
             
-            # Generate report if reporter is available
-            report = None
-            if self.reporter:
-                try:
-                    report = await self.reporter.generate_report(session_id)
-                except Exception as e:
-                    self.logger.warning(f"Could not generate report: {e}")
-                    report = {"path": "Report generation failed", "error": str(e)}
+            # Generate report
+            report = await self.reporter.generate_report(session_id)
             
             self.logger.info(f"Analysis complete. Found {len(results)} findings.")
             
             return {
                 "session_id": session_id,
-                "target_path": str(file_path),
-                "files_analyzed": 1,
                 "results": results,
-                "report_path": report.get("path") if report else None,
-                "dashboard_url": dashboard_url
+                "report_path": report["path"],
+                "dashboard_url": self.dashboard.url if self.config.dashboard.enabled else None
             }
             
-        except Exception as e:
-            self.logger.error(f"Analysis failed: {e}")
-            # Update session status to failed
-            await self._update_session_status(session_id, "failed", str(e))
-            raise
         finally:
-            # Stop dashboard if it was started
-            if self.dashboard and dashboard_url:
-                try:
-                    await self.dashboard.stop()
-                except Exception as e:
-                    self.logger.warning(f"Error stopping dashboard: {e}")
+            if self.config.dashboard.enabled:
+                await self.dashboard.stop()
     
     async def analyze_directory(self, directory_path: str) -> Dict[str, Any]:
         """Analyze all files in a directory"""
         directory_path = Path(directory_path)
-        if not directory_path.exists() or not directory_path.is_dir():
-            raise ValueError(f"Directory not found: {directory_path}")
+        if not directory_path.exists():
+            raise FileNotFoundError(f"Directory not found: {directory_path}")
         
-        # Find all files to analyze
-        files_to_analyze = []
-        for file_path in directory_path.rglob("*"):
-            if file_path.is_file() and not file_path.name.startswith('.'):
-                files_to_analyze.append(file_path)
-        
-        if not files_to_analyze:
-            raise ValueError(f"No files found in directory: {directory_path}")
-        
-        # Create analysis session for the directory
+        # Create batch session
         session_id = await self.db.create_session(
             target_path=str(directory_path),
             target_dir=str(directory_path),
-            config=self.config.to_dict()
+            config=self.config.to_dict(),
+            batch_mode=True
         )
         
-        self.logger.info(f"Starting directory analysis session {session_id} for {len(files_to_analyze)} files")
+        self.logger.info(f"Starting batch analysis session {session_id} for {directory_path}")
         
-        # Start dashboard if enabled and available
-        dashboard_url = None
-        if self.dashboard and self.config.dashboard.enabled:
-            try:
-                await self.dashboard.start(session_id)
-                dashboard_url = f"http://{self.config.dashboard.host}:{self.config.dashboard.port}"
-            except Exception as e:
-                self.logger.warning(f"Could not start dashboard: {e}")
+        # Start dashboard if enabled
+        if self.config.dashboard.enabled:
+            await self.dashboard.start(session_id)
         
         try:
-            # Analyze all files
-            all_results = []
-            for file_path in files_to_analyze:
-                try:
-                    file_results = await self.orchestrator.analyze(file_path, session_id)
-                    all_results.extend(file_results)
-                    self.logger.info(f"Completed analysis of {file_path}")
-                except Exception as e:
-                    self.logger.error(f"Failed to analyze {file_path}: {e}")
-                    continue
+            # Run directory analysis
+            results = await self.orchestrator.analyze_directory(directory_path, session_id)
             
-            # Generate report if reporter is available
-            report = None
-            if self.reporter:
-                try:
-                    report = await self.reporter.generate_report(session_id)
-                except Exception as e:
-                    self.logger.warning(f"Could not generate report: {e}")
-                    report = {"path": "Report generation failed", "error": str(e)}
+            # Generate report
+            report = await self.reporter.generate_report(session_id)
             
-            self.logger.info(f"Directory analysis complete. Found {len(all_results)} total findings.")
+            self.logger.info(f"Batch analysis complete. Processed {results['total_files']} files.")
             
             return {
                 "session_id": session_id,
-                "target_path": str(directory_path),
-                "files_analyzed": len(files_to_analyze),
-                "results": all_results,
-                "report_path": report.get("path") if report else None,
-                "dashboard_url": dashboard_url
+                "total_files": results["total_files"],
+                "results": results["results"],
+                "report_path": report["path"],
+                "dashboard_url": self.dashboard.url if self.config.dashboard.enabled else None
             }
             
-        except Exception as e:
-            self.logger.error(f"Directory analysis failed: {e}")
-            await self._update_session_status(session_id, "failed", str(e))
-            raise
         finally:
-            # Stop dashboard if it was started
-            if self.dashboard and dashboard_url:
-                try:
-                    await self.dashboard.stop()
-                except Exception as e:
-                    self.logger.warning(f"Error stopping dashboard: {e}")
+            if self.config.dashboard.enabled:
+                await self.dashboard.stop()
     
     async def resume_session(self, session_id: str) -> Dict[str, Any]:
         """Resume an interrupted analysis session"""
@@ -253,29 +163,75 @@ class StegAnalyzer:
         if not session:
             raise ValueError(f"Session {session_id} not found")
         
-        self.logger.info(f"Resuming session {session_id}")
+        if session["status"] == "completed":
+            return await self.get_session_results(session_id)
         
-        # Update config if needed
-        if session.get('config'):
-            # Merge session config with current config
-            session_config = session['config']
-            if isinstance(session_config, str):
-                session_config = json.loads(session_config)
-            # Update current config with session config
-            current_config = self.config.to_dict()
-            current_config.update(session_config)
+        # Restore configuration
+        self.config.update(session["config"])
         
-        # Continue analysis from where it left off
-        target_path = Path(session['target_path'])
+        # Start dashboard
+        if self.config.dashboard.enabled:
+            await self.dashboard.start(session_id)
         
-        if target_path.is_file():
-            results = await self.analyze_file(str(target_path), session.get('target_dir'))
-        elif target_path.is_dir():
-            results = await self.analyze_directory(str(target_path))
-        else:
-            raise ValueError(f"Target path no longer exists: {target_path}")
+        try:
+            # Resume analysis
+            if session["batch_mode"]:
+                return await self._resume_batch_analysis(session_id)
+            else:
+                target_path = Path(session["target_path"])
+                results = await self.orchestrator.analyze(target_path, session_id)
+                report = await self.reporter.generate_report(session_id)
+                
+                return {
+                    "session_id": session_id,
+                    "results": results,
+                    "report_path": report["path"],
+                    "dashboard_url": self.dashboard.url if self.config.dashboard.enabled else None
+                }
+        finally:
+            if self.config.dashboard.enabled:
+                await self.dashboard.stop()
+    
+    async def _resume_batch_analysis(self, session_id: str) -> Dict[str, Any]:
+        """Resume batch analysis from checkpoint"""
+        # Get incomplete files
+        incomplete_files = await self.db.get_incomplete_files(session_id)
         
-        return results
+        if not incomplete_files:
+            self.logger.info("All files already processed")
+            report = await self.reporter.generate_report(session_id)
+            return {
+                "session_id": session_id,
+                "files_processed": 0,
+                "results": [],
+                "report_path": report["path"]
+            }
+        
+        # Continue processing
+        batch_size = self.config.orchestrator.max_concurrent_files
+        results = []
+        
+        for i in range(0, len(incomplete_files), batch_size):
+            batch = incomplete_files[i:i + batch_size]
+            batch_results = await asyncio.gather(*[
+                self.orchestrator.analyze(Path(file_path), session_id)
+                for file_path in batch
+            ], return_exceptions=True)
+            
+            for file_path, result in zip(batch, batch_results):
+                if isinstance(result, Exception):
+                    self.logger.error(f"Failed to analyze {file_path}: {result}")
+                else:
+                    results.extend(result)
+        
+        report = await self.reporter.generate_report(session_id)
+        
+        return {
+            "session_id": session_id,
+            "files_processed": len(incomplete_files),
+            "results": results,
+            "report_path": report["path"]
+        }
     
     async def get_session_results(self, session_id: str) -> Dict[str, Any]:
         """Get results for a completed session"""
@@ -297,27 +253,13 @@ class StegAnalyzer:
         """List all analysis sessions"""
         return await self.db.list_sessions()
     
-    async def _update_session_status(self, session_id: str, status: str, error_message: str = None):
-        """Update session status"""
-        # This is a helper method to update session status
-        # Implementation depends on your database schema
-        pass
-    
     async def cleanup(self):
         """Cleanup resources"""
-        try:
-            await self.db.close()
-        except Exception as e:
-            self.logger.error(f"Error closing database: {e}")
-        
-        if self.dashboard:
-            try:
-                await self.dashboard.stop()
-            except Exception as e:
-                self.logger.error(f"Error stopping dashboard: {e}")
+        await self.db.close()
+        if hasattr(self, 'dashboard'):
+            await self.dashboard.stop()
 
 async def main():
-    """Main entry point"""
     parser = argparse.ArgumentParser(
         description="StegAnalyzer - Advanced Steganography Detection Framework"
     )

@@ -105,25 +105,24 @@ class StegOrchestrator:
         self.db = database
         self.logger = logging.getLogger(__name__)
         
-        # Initialize tool managers (only if available) - FIXED TO USE BRACKET NOTATION
-        self.classic_tools = ClassicStegoTools(self.config.get('classic_stego', {})) if ClassicStegoTools else None
-        self.image_tools = ImageForensicsTools(self.config.get('image_forensics', {})) if ImageForensicsTools else None
-        self.audio_tools = AudioAnalysisTools(self.config.get('audio_analysis', {})) if AudioAnalysisTools else None
-        self.file_tools = FileForensicsTools(self.config.get('file_forensics', {})) if FileForensicsTools else None
-        self.crypto_tools = CryptoAnalysisTools(self.config.get('crypto', {})) if CryptoAnalysisTools else None
-        self.metadata_tools = MetadataCarving(self.config) if MetadataCarving else None
+        # Initialize tool managers (only if available)
+        self.classic_tools = ClassicStegoTools(config) if ClassicStegoTools else None
+        self.image_tools = ImageForensicsTools(config) if ImageForensicsTools else None
+        self.audio_tools = AudioAnalysisTools(config) if AudioAnalysisTools else None
+        self.file_tools = FileForensicsTools(config) if FileForensicsTools else None
+        self.crypto_tools = CryptoAnalysisTools(config) if CryptoAnalysisTools else None
+        self.metadata_tools = MetadataCarving(config) if MetadataCarving else None
         
         # Initialize AI components (only if available)
-        self.ml_detector = MLStegDetector(self.config.get('ml', {})) if MLStegDetector else None
-        self.llm_analyzer = LLMAnalyzer(self.config.get('llm', {})) if LLMAnalyzer else None
-        self.multimodal_classifier = MultimodalClassifier(self.config.get('multimodal', {})) if MultimodalClassifier else None
+        self.ml_detector = MLStegDetector(config) if MLStegDetector else None
+        self.llm_analyzer = LLMAnalyzer(config) if LLMAnalyzer else None
+        self.multimodal_classifier = MultimodalClassifier(config) if MultimodalClassifier else None
         
         # Initialize cloud integrations (only if available)
-        cloud_config = self.config.get('cloud', {})
-        self.cloud = CloudIntegrations(config) if (CloudIntegrations and cloud_config.get('enabled', False)) else None
+        self.cloud = CloudIntegrations(config) if (CloudIntegrations and config.cloud.enabled) else None
         
         # Core components (should always be available)
-        self.file_analyzer = FileAnalyzer(self.config.get('analysis', {}))
+        self.file_analyzer = FileAnalyzer(config)
         self.graph_tracker = GraphTracker(database)
         self.gpu_manager = GPUManager() if GPUManager else None
         self.checkpoint_manager = CheckpointManager(database)
@@ -147,7 +146,6 @@ class StegOrchestrator:
         try:
             # Basic file analysis first
             file_info = await self.file_analyzer.analyze_file(file_path)
-            file_info['file_path'] = str(file_path)  # Ensure file_path is present
             await self.db.store_file_analysis(session_id, file_info)
             
             # Create analysis plan based on file type
@@ -195,227 +193,236 @@ class StegOrchestrator:
         if self.ml_detector and "ml_detection" not in completed_set:
             tasks.append(AnalysisTask(
                 file_path=file_path, method="ml_detection", tool_name="ml_detector",
-                priority=3, dependencies=["basic_analysis"], gpu_required=True,
-                estimated_time=10.0
+                priority=3, dependencies=["basic_analysis"], gpu_required=True, estimated_time=10.0
             ))
         
-        return tasks
+        if self.llm_analyzer and "llm_analysis" not in completed_set:
+            tasks.append(AnalysisTask(
+                file_path=file_path, method="llm_analysis", tool_name="llm_analyzer",
+                priority=4, dependencies=["basic_analysis"], estimated_time=15.0
+            ))
+        
+        return sorted(tasks, key=lambda t: t.priority)
 
-    def _create_image_analysis_tasks(self, file_path: Path, completed_set: Set[str]) -> List[AnalysisTask]:
-        """Create analysis tasks specific to image files"""
+    def _create_image_analysis_tasks(self, file_path: Path, completed: Set[str]) -> List[AnalysisTask]:
+        """Create image-specific analysis tasks"""
         tasks = []
         
-        # Classic steganography tools
         if self.classic_tools:
-            classic_methods = ["steghide", "outguess", "zsteg", "jsteg"]
-            for method in classic_methods:
-                if method not in completed_set:
-                    tasks.append(AnalysisTask(
-                        file_path=file_path, method=method, tool_name="classic_stego",
-                        priority=2, dependencies=["basic_analysis"], estimated_time=5.0
-                    ))
-        
-        # Image forensics
-        if self.image_tools:
-            forensic_methods = ["metadata_analysis", "noise_analysis", "jpeg_quality"]
-            for method in forensic_methods:
-                if method not in completed_set:
-                    tasks.append(AnalysisTask(
-                        file_path=file_path, method=method, tool_name="image_forensics",
-                        priority=2, dependencies=["basic_analysis"], estimated_time=3.0
-                    ))
-        
-        return tasks
-
-    def _create_audio_analysis_tasks(self, file_path: Path, completed_set: Set[str]) -> List[AnalysisTask]:
-        """Create analysis tasks specific to audio files"""
-        tasks = []
-        
-        if self.audio_tools:
-            audio_methods = ["spectral_analysis", "lsb_analysis", "echo_hiding"]
-            for method in audio_methods:
-                if method not in completed_set:
-                    tasks.append(AnalysisTask(
-                        file_path=file_path, method=method, tool_name="audio_analysis",
-                        priority=2, dependencies=["basic_analysis"], estimated_time=8.0
-                    ))
-        
-        return tasks
-
-    def _create_video_analysis_tasks(self, file_path: Path, completed_set: Set[str]) -> List[AnalysisTask]:
-        """Create analysis tasks specific to video files"""
-        tasks = []
-        
-        # Video analysis methods
-        video_methods = ["frame_analysis", "metadata_extraction", "codec_analysis"]
-        for method in video_methods:
-            if method not in completed_set:
+            if "steghide" not in completed:
                 tasks.append(AnalysisTask(
-                    file_path=file_path, method=method, tool_name="video_analysis",
-                    priority=2, dependencies=["basic_analysis"], estimated_time=15.0
+                    file_path=file_path, method="steghide", tool_name="classic_stego",
+                    priority=2, dependencies=["basic_analysis"], estimated_time=5.0
+                ))
+            
+            if "outguess" not in completed:
+                tasks.append(AnalysisTask(
+                    file_path=file_path, method="outguess", tool_name="classic_stego",
+                    priority=2, dependencies=["basic_analysis"], estimated_time=5.0
+                ))
+            
+            if "zsteg" not in completed:
+                tasks.append(AnalysisTask(
+                    file_path=file_path, method="zsteg", tool_name="classic_stego",
+                    priority=2, dependencies=["basic_analysis"], estimated_time=8.0
+                ))
+        
+        if self.image_tools:
+            if "ela_analysis" not in completed:
+                tasks.append(AnalysisTask(
+                    file_path=file_path, method="ela_analysis", tool_name="image_forensics",
+                    priority=2, dependencies=["basic_analysis"], estimated_time=3.0
+                ))
+            
+            if "noise_analysis" not in completed:
+                tasks.append(AnalysisTask(
+                    file_path=file_path, method="noise_analysis", tool_name="image_forensics",
+                    priority=3, dependencies=["basic_analysis"], estimated_time=7.0
                 ))
         
         return tasks
 
-    def _create_generic_analysis_tasks(self, file_path: Path, completed_set: Set[str]) -> List[AnalysisTask]:
-        """Create analysis tasks for generic files"""
+    def _create_audio_analysis_tasks(self, file_path: Path, completed: Set[str]) -> List[AnalysisTask]:
+        """Create audio-specific analysis tasks"""
         tasks = []
         
-        # File forensics
-        if self.file_tools:
-            forensic_methods = ["signature_analysis", "entropy_analysis", "string_extraction"]
-            for method in forensic_methods:
-                if method not in completed_set:
-                    tasks.append(AnalysisTask(
-                        file_path=file_path, method=method, tool_name="file_forensics",
-                        priority=2, dependencies=["basic_analysis"], estimated_time=4.0
-                    ))
+        if self.audio_tools:
+            if "spectral_analysis" not in completed:
+                tasks.append(AnalysisTask(
+                    file_path=file_path, method="spectral_analysis", tool_name="audio_analysis",
+                    priority=2, dependencies=["basic_analysis"], estimated_time=10.0
+                ))
+            
+            if "lsb_audio" not in completed:
+                tasks.append(AnalysisTask(
+                    file_path=file_path, method="lsb_audio", tool_name="audio_analysis",
+                    priority=2, dependencies=["basic_analysis"], estimated_time=8.0
+                ))
         
-        # Crypto analysis
+        return tasks
+
+    def _create_video_analysis_tasks(self, file_path: Path, completed: Set[str]) -> List[AnalysisTask]:
+        """Create video-specific analysis tasks"""
+        tasks = []
+        
+        # Video analysis would go here when implemented
+        if "video_metadata" not in completed:
+            tasks.append(AnalysisTask(
+                file_path=file_path, method="video_metadata", tool_name="file_forensics",
+                priority=2, dependencies=["basic_analysis"], estimated_time=5.0
+            ))
+        
+        return tasks
+
+    def _create_generic_analysis_tasks(self, file_path: Path, completed: Set[str]) -> List[AnalysisTask]:
+        """Create generic file analysis tasks"""
+        tasks = []
+        
+        if self.file_tools:
+            if "file_signature" not in completed:
+                tasks.append(AnalysisTask(
+                    file_path=file_path, method="file_signature", tool_name="file_forensics",
+                    priority=2, dependencies=["basic_analysis"], estimated_time=2.0
+                ))
+        
         if self.crypto_tools:
-            crypto_methods = ["entropy_test", "chi_square_test", "pattern_detection"]
-            for method in crypto_methods:
-                if method not in completed_set:
-                    tasks.append(AnalysisTask(
-                        file_path=file_path, method=method, tool_name="crypto_analysis",
-                        priority=2, dependencies=["basic_analysis"], estimated_time=6.0
-                    ))
+            if "entropy_analysis" not in completed:
+                tasks.append(AnalysisTask(
+                    file_path=file_path, method="entropy_analysis", tool_name="crypto_analysis",
+                    priority=2, dependencies=["basic_analysis"], estimated_time=4.0
+                ))
         
         return tasks
 
     async def _execute_analysis_tasks(self, tasks: List[AnalysisTask], session_id: str) -> List[Dict[str, Any]]:
-        """Execute analysis tasks with proper dependency management"""
+        """Execute analysis tasks with dependency management"""
         results = []
-        completed_tasks = set()
+        completed_methods = set()
         
-        # Sort tasks by priority
-        tasks.sort(key=lambda t: t.priority)
+        # Create task dependency graph
+        task_map = {task.method: task for task in tasks}
         
-        # Execute tasks in batches based on dependencies
-        max_concurrent = self.config.get('orchestrator', {}).get('max_concurrent_files', 4)
+        # Execute tasks in dependency order
+        max_concurrent = self.config.performance.max_concurrent_tasks
+        semaphore = asyncio.Semaphore(max_concurrent)
         
-        for task in tasks:
-            try:
-                # Check if dependencies are met
-                if all(dep in completed_tasks for dep in task.dependencies):
-                    # Execute the task
-                    task_results = await self._execute_single_task(task, session_id)
-                    results.extend(task_results)
-                    completed_tasks.add(task.method)
-                else:
-                    self.logger.warning(f"Skipping task {task.method} due to unmet dependencies")
-            
-            except Exception as e:
-                self.logger.error(f"Task {task.method} failed: {e}")
-                continue
-        
-        return results
-
-    async def _execute_single_task(self, task: AnalysisTask, session_id: str) -> List[Dict[str, Any]]:
-        """Execute a single analysis task"""
-        self.logger.debug(f"Executing task: {task.method} on {task.file_path}")
-        
-        results = []
-        
-        try:
-            # Route to appropriate tool
-            if task.tool_name == "file_analyzer":
-                result = await self.file_analyzer.analyze_file(task.file_path)
-                results.append(result)
+        async def execute_task(task: AnalysisTask):
+            async with semaphore:
+                # Wait for dependencies
+                for dep in task.dependencies:
+                    while dep not in completed_methods:
+                        await asyncio.sleep(0.1)
                 
-            elif task.tool_name == "classic_stego" and self.classic_tools:
-                result = await self._run_classic_stego_method(task.method, task.file_path)
-                if result:
-                    results.append(result)
+                try:
+                    result = await self._execute_single_task(task, session_id)
+                    if result:
+                        results.extend(result if isinstance(result, list) else [result])
+                    completed_methods.add(task.method)
                     
-            elif task.tool_name == "image_forensics" and self.image_tools:
-                result = await self._run_image_forensics_method(task.method, task.file_path)
-                if result:
-                    results.append(result)
-                    
-            elif task.tool_name == "ml_detector" and self.ml_detector:
-                result = await self._run_ml_detection(task.file_path)
-                if result:
-                    results.append(result)
-            
-            # Store results in database
-            for result in results:
-                if result and 'tool_name' in result:
-                    file_id = result.get('file_id')
-                    if not file_id:
-                        # Try to get file_id from database
-                        cursor = self.db.sqlite_conn.cursor()
-                        cursor.execute("SELECT id FROM files WHERE session_id = ? AND file_path = ?", 
-                                     (session_id, str(task.file_path)))
-                        row = cursor.fetchone()
-                        file_id = row[0] if row else None
-                    
-                    if file_id:
-                        await self.db.store_finding(session_id, file_id, result)
+                except Exception as e:
+                    self.logger.error(f"Task {task.method} failed: {e}")
         
-        except Exception as e:
-            self.logger.error(f"Error executing task {task.method}: {e}")
+        # Start all tasks
+        task_futures = [asyncio.create_task(execute_task(task)) for task in tasks]
+        await asyncio.gather(*task_futures, return_exceptions=True)
         
         return results
 
-    async def _run_classic_stego_method(self, method: str, file_path: Path) -> Dict[str, Any]:
-        """Run a classic steganography detection method"""
+    async def _execute_single_task(self, task: AnalysisTask, session_id: str) -> Optional[List[Dict[str, Any]]]:
+        """Execute a single analysis task"""
+        self.logger.info(f"Executing {task.method} on {task.file_path}")
+        
         try:
-            # This would call the actual tool method
-            result = {
-                "tool_name": "classic_stego",
-                "method": method,
-                "file_path": str(file_path),
-                "type": "steganography_detection",
-                "confidence": 0.0,
-                "description": f"Classic steganography analysis using {method}",
-                "evidence": "",
-                "metadata": {}
-            }
+            # Record task start
+            await self.checkpoint_manager.save_checkpoint(session_id, {
+                'current_task': task.method,
+                'file_path': str(task.file_path),
+                'timestamp': time.time()
+            })
+            
+            # Execute based on tool
+            result = None
+            
+            if task.tool_name == "classic_stego" and self.classic_tools:
+                result = await self._run_classic_tool(task)
+            elif task.tool_name == "image_forensics" and self.image_tools:
+                result = await self._run_image_tool(task)
+            elif task.tool_name == "audio_analysis" and self.audio_tools:
+                result = await self._run_audio_tool(task)
+            elif task.tool_name == "file_forensics" and self.file_tools:
+                result = await self._run_file_tool(task)
+            elif task.tool_name == "crypto_analysis" and self.crypto_tools:
+                result = await self._run_crypto_tool(task)
+            elif task.tool_name == "ml_detector" and self.ml_detector:
+                result = await self._run_ml_tool(task)
+            elif task.tool_name == "llm_analyzer" and self.llm_analyzer:
+                result = await self._run_llm_tool(task)
+            else:
+                self.logger.warning(f"Tool {task.tool_name} not available for {task.method}")
+            
+            # Store result
+            if result:
+                await self.db.store_analysis_result(session_id, task.method, result)
+            
             return result
+            
         except Exception as e:
-            self.logger.error(f"Classic stego method {method} failed: {e}")
+            self.logger.error(f"Failed to execute {task.method}: {e}")
             return None
 
-    async def _run_image_forensics_method(self, method: str, file_path: Path) -> Dict[str, Any]:
-        """Run an image forensics method"""
-        try:
-            result = {
-                "tool_name": "image_forensics",
-                "method": method,
-                "file_path": str(file_path),
-                "type": "image_forensics",
-                "confidence": 0.0,
-                "description": f"Image forensics analysis using {method}",
-                "evidence": "",
-                "metadata": {}
-            }
-            return result
-        except Exception as e:
-            self.logger.error(f"Image forensics method {method} failed: {e}")
-            return None
+    async def _run_classic_tool(self, task: AnalysisTask) -> List[Dict[str, Any]]:
+        """Run classic steganography tool"""
+        if task.method == "steghide":
+            return self.classic_tools.run_steghide(task.file_path)
+        elif task.method == "outguess":
+            return self.classic_tools.run_outguess(task.file_path)
+        elif task.method == "zsteg":
+            return self.classic_tools.run_zsteg(task.file_path)
+        return []
 
-    async def _run_ml_detection(self, file_path: Path) -> Dict[str, Any]:
-        """Run ML-based steganography detection"""
-        try:
-            result = {
-                "tool_name": "ml_detector",
-                "method": "cnn_detection",
-                "file_path": str(file_path),
-                "type": "ml_detection",
-                "confidence": 0.0,
-                "description": "Machine learning based steganography detection",
-                "evidence": "",
-                "metadata": {}
-            }
-            return result
-        except Exception as e:
-            self.logger.error(f"ML detection failed: {e}")
-            return None
+    async def _run_image_tool(self, task: AnalysisTask) -> List[Dict[str, Any]]:
+        """Run image forensics tool"""
+        if task.method == "ela_analysis":
+            return self.image_tools.ela_analysis(task.file_path)
+        elif task.method == "noise_analysis":
+            return self.image_tools.noise_analysis(task.file_path)
+        return []
+
+    async def _run_audio_tool(self, task: AnalysisTask) -> List[Dict[str, Any]]:
+        """Run audio analysis tool"""
+        if task.method == "spectral_analysis":
+            return self.audio_tools.spectral_analysis(task.file_path)
+        elif task.method == "lsb_audio":
+            return self.audio_tools.lsb_analysis(task.file_path)
+        return []
+
+    async def _run_file_tool(self, task: AnalysisTask) -> List[Dict[str, Any]]:
+        """Run file forensics tool"""
+        if task.method == "file_signature":
+            return self.file_tools.signature_analysis(task.file_path)
+        elif task.method == "video_metadata":
+            return self.file_tools.metadata_analysis(task.file_path)
+        return []
+
+    async def _run_crypto_tool(self, task: AnalysisTask) -> List[Dict[str, Any]]:
+        """Run cryptographic analysis tool"""
+        if task.method == "entropy_analysis":
+            return self.crypto_tools.entropy_analysis(task.file_path)
+        return []
+
+    async def _run_ml_tool(self, task: AnalysisTask) -> List[Dict[str, Any]]:
+        """Run ML detection tool"""
+        return await self.ml_detector.detect(task.file_path)
+
+    async def _run_llm_tool(self, task: AnalysisTask) -> List[Dict[str, Any]]:
+        """Run LLM analysis tool"""
+        return await self.llm_analyzer.analyze(task.file_path)
 
     async def _post_process_results(self, results: List[Dict[str, Any]], session_id: str) -> List[Dict[str, Any]]:
         """Post-process and correlate analysis results"""
-        # Sort results by confidence and type
+        self.logger.info(f"Post-processing {len(results)} results")
+        
+        # Group results by confidence and type
         high_confidence = [r for r in results if r.get('confidence', 0) > 0.7]
         medium_confidence = [r for r in results if 0.3 < r.get('confidence', 0) <= 0.7]
         
@@ -480,21 +487,65 @@ class StegOrchestrator:
             if file_path.is_file() and not file_path.name.startswith('.'):
                 files.append(file_path)
         
-        if not files:
-            raise ValueError(f"No files found in directory: {directory}")
+        self.logger.info(f"Found {len(files)} files to analyze")
         
-        # Analyze each file
+        # Analyze files in batches
+        batch_size = self.config.performance.max_concurrent_files
         all_results = []
-        for file_path in files:
-            try:
-                file_results = await self.analyze(file_path, session_id)
-                all_results.extend(file_results)
-            except Exception as e:
-                self.logger.error(f"Failed to analyze {file_path}: {e}")
-                continue
+        
+        for i in range(0, len(files), batch_size):
+            batch = files[i:i + batch_size]
+            
+            # Create tasks for this batch
+            batch_tasks = [self.analyze(file_path, session_id) for file_path in batch]
+            
+            # Execute batch
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+            
+            # Collect successful results
+            for result in batch_results:
+                if isinstance(result, list):
+                    all_results.extend(result)
+                elif not isinstance(result, Exception):
+                    all_results.append(result)
         
         return {
-            "files_processed": len(files),
-            "total_findings": len(all_results),
-            "results": all_results
+            'total_files': len(files),
+            'results': all_results,
+            'session_id': session_id
+        }
+
+    def can_run(self, task):
+        """Check if a task can be run based on available tools"""
+        if task.tool_name == "classic_stego":
+            return self.classic_tools is not None
+        elif task.tool_name == "image_forensics":
+            return self.image_tools is not None
+        elif task.tool_name == "audio_analysis":
+            return self.audio_tools is not None
+        elif task.tool_name == "file_forensics":
+            return self.file_tools is not None
+        elif task.tool_name == "crypto_analysis":
+            return self.crypto_tools is not None
+        elif task.tool_name == "ml_detector":
+            return self.ml_detector is not None
+        elif task.tool_name == "llm_analyzer":
+            return self.llm_analyzer is not None
+        else:
+            return False
+
+    async def get_available_tools(self) -> Dict[str, bool]:
+        """Get status of all available tools"""
+        return {
+            'classic_stego': self.classic_tools is not None,
+            'image_forensics': self.image_tools is not None,
+            'audio_analysis': self.audio_tools is not None,
+            'file_forensics': self.file_tools is not None,
+            'crypto_analysis': self.crypto_tools is not None,
+            'metadata_carving': self.metadata_tools is not None,
+            'ml_detector': self.ml_detector is not None,
+            'llm_analyzer': self.llm_analyzer is not None,
+            'multimodal_classifier': self.multimodal_classifier is not None,
+            'cloud_integrations': self.cloud is not None,
+            'gpu_manager': self.gpu_manager is not None
         }
