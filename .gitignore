@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+env/
+*.egg-info/
+.eggs/
+.Python
+.ipynb_checkpoints/
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+# OS
+.DS_Store
+Thumbs.db
+# Logs & Output
+logs/
+reports/
+*.log
+*.sqlite
+*.db
+data/
+models/
+wordlists/
+output/
+*.tmp
+# Secrets
+*.key
+*.pem
+.env
+# Jupyter
+*.ipynb
+# Docker
+docker-compose.override.yml
