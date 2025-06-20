@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-StegAnalyzer Orchestrator - Working Version
+StegAnalyzer Orchestrator - Complete Working Version
 """
 
 import os
@@ -10,8 +10,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Set, Union
-from dataclasses import dataclass, asdict
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from dataclasses import dataclass
 import json
 import hashlib
 
@@ -37,6 +36,7 @@ class StegOrchestrator:
     
     def __init__(self, config, database=None):
         self.config = config
+        self.database = database
         self.logger = logging.getLogger(__name__)
         
         # Initialize all tools to None first
@@ -55,10 +55,6 @@ class StegOrchestrator:
         # Initialize tools
         self._initialize_tools()
         
-        # Thread pools for parallel execution
-        self.cpu_executor = None
-        self.gpu_executor = None
-        
         # Analysis state
         self.active_sessions = {}
         self.completed_tasks = set()
@@ -73,6 +69,8 @@ class StegOrchestrator:
             self.logger.info("File forensics tools initialized")
         except ImportError as e:
             self.logger.warning(f"File forensics tools not available: {e}")
+        except Exception as e:
+            self.logger.error(f"File forensics tools initialization failed: {e}")
         
         # Classic steganography tools
         try:
@@ -81,6 +79,8 @@ class StegOrchestrator:
             self.logger.info("Classic stego tools initialized")
         except ImportError as e:
             self.logger.warning(f"Classic stego tools not available: {e}")
+        except Exception as e:
+            self.logger.error(f"Classic stego tools initialization failed: {e}")
         
         # Image forensics tools
         try:
@@ -89,14 +89,20 @@ class StegOrchestrator:
             self.logger.info("Image forensics tools initialized")
         except ImportError as e:
             self.logger.warning(f"Image forensics tools not available: {e}")
+        except Exception as e:
+            self.logger.error(f"Image forensics tools initialization failed: {e}")
         
         # Audio analysis tools
         try:
             from tools.audio_analysis import AudioAnalysisTools
-            self.audio_tools = AudioAnalysisTools(self.config)
+            # AudioAnalysisTools requires file_path parameter, pass None for global instance
+            self.audio_tools = AudioAnalysisTools(self.config, None)
             self.logger.info("Audio analysis tools initialized")
         except ImportError as e:
             self.logger.warning(f"Audio analysis tools not available: {e}")
+        except Exception as e:
+            self.logger.warning(f"Audio analysis tools initialization failed: {e}")
+            self.audio_tools = None
         
         # Crypto analysis tools
         try:
@@ -105,6 +111,8 @@ class StegOrchestrator:
             self.logger.info("Crypto analysis tools initialized")
         except ImportError as e:
             self.logger.warning(f"Crypto analysis tools not available: {e}")
+        except Exception as e:
+            self.logger.error(f"Crypto analysis tools initialization failed: {e}")
         
         # Metadata carving tools
         try:
@@ -113,6 +121,8 @@ class StegOrchestrator:
             self.logger.info("Metadata carving tools initialized")
         except ImportError as e:
             self.logger.warning(f"Metadata carving tools not available: {e}")
+        except Exception as e:
+            self.logger.error(f"Metadata carving tools initialization failed: {e}")
         
         # ML detector
         try:
@@ -121,6 +131,8 @@ class StegOrchestrator:
             self.logger.info("ML detector initialized")
         except ImportError as e:
             self.logger.warning(f"ML detector not available: {e}")
+        except Exception as e:
+            self.logger.error(f"ML detector initialization failed: {e}")
         
         # LLM analyzer
         try:
@@ -129,6 +141,8 @@ class StegOrchestrator:
             self.logger.info("LLM analyzer initialized")
         except ImportError as e:
             self.logger.warning(f"LLM analyzer not available: {e}")
+        except Exception as e:
+            self.logger.error(f"LLM analyzer initialization failed: {e}")
         
         # Cascade analyzer
         try:
@@ -137,6 +151,30 @@ class StegOrchestrator:
             self.logger.info("Cascade analyzer initialized")
         except ImportError as e:
             self.logger.warning(f"Cascade analyzer not available: {e}")
+        except Exception as e:
+            self.logger.error(f"Cascade analyzer initialization failed: {e}")
+        
+        # Cloud integrations
+        try:
+            from integrations.cloud import CloudIntegration
+            if hasattr(self.config, 'cloud') and self.config.cloud.enabled:
+                self.cloud = CloudIntegration(self.config)
+                self.logger.info("Cloud integrations initialized")
+        except ImportError as e:
+            self.logger.warning(f"Cloud integrations not available: {e}")
+        except Exception as e:
+            self.logger.error(f"Cloud integrations initialization failed: {e}")
+        
+        # GPU manager
+        try:
+            from core.gpu_manager import GPUManager
+            if hasattr(self.config, 'ml') and self.config.ml.gpu_enabled:
+                self.gpu_manager = GPUManager(self.config)
+                self.logger.info("GPU manager initialized")
+        except ImportError as e:
+            self.logger.warning(f"GPU manager not available: {e}")
+        except Exception as e:
+            self.logger.warning(f"GPU manager initialization failed: {e}")
     
     def get_tool(self, tool_name: str):
         """Get tool by name"""
@@ -294,6 +332,16 @@ class StegOrchestrator:
                     priority=6
                 ))
         
+        # Audio-specific tasks
+        if file_ext in ['.wav', '.mp3', '.flac', '.ogg']:
+            if self.audio_tools and "audio_spectral" not in completed_set:
+                tasks.append(AnalysisTask(
+                    file_path=file_path,
+                    method="audio_spectral",
+                    tool_name="audio_analysis",
+                    priority=6
+                ))
+        
         # ML detection
         if self.ml_detector and "ml_detection" not in completed_set:
             tasks.append(AnalysisTask(
@@ -377,12 +425,31 @@ class StegOrchestrator:
             'metadata_carving': self.metadata_tools is not None,
             'ml_detector': self.ml_detector is not None,
             'llm_analyzer': self.llm_analyzer is not None,
-            'cascade_analyzer': self.cascade_analyzer is not None
+            'cascade_analyzer': self.cascade_analyzer is not None,
+            'cloud': self.cloud is not None,
+            'gpu_manager': self.gpu_manager is not None
+        }
+    
+    async def get_system_status(self) -> Dict[str, Any]:
+        """Get comprehensive system status"""
+        tools_status = await self.get_available_tools()
+        
+        return {
+            "tools": tools_status,
+            "active_sessions": len(self.active_sessions),
+            "completed_tasks": len(self.completed_tasks),
+            "system_info": {
+                "python_version": sys.version,
+                "platform": sys.platform
+            }
         }
     
     def cleanup(self):
         """Cleanup resources"""
-        if self.cpu_executor:
-            self.cpu_executor.shutdown(wait=True)
-        if self.gpu_executor:
-            self.gpu_executor.shutdown(wait=True)
+        try:
+            if hasattr(self, 'cpu_executor') and self.cpu_executor:
+                self.cpu_executor.shutdown(wait=True)
+            if hasattr(self, 'gpu_executor') and self.gpu_executor:
+                self.gpu_executor.shutdown(wait=True)
+        except Exception as e:
+            self.logger.error(f"Cleanup failed: {e}")
