@@ -1,0 +1,27 @@
+{
+  "database": {
+    "type": "sqlite",
+    "path": "steganalyzer.db"
+  },
+  "orchestrator": {
+    "max_concurrent_files": 8,
+    "max_cpu_workers": 8,
+    "max_gpu_workers": 0,
+    "task_timeout": 1800
+  },
+  "comprehensive_cascade": {
+    "max_depth": 20,
+    "max_files": 50000,
+    "exhaustive_zsteg": true,
+    "bitplane_xor": true,
+    "structured_output": true,
+    "permanent_extraction": true,
+    "confidence_threshold": 0.5
+  },
+  "analysis": {
+    "quick_mode": false,
+    "deep_analysis": true,
+    "comprehensive_mode": true,
+    "parallel_analysis": true
+  }
+}

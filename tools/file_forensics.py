@@ -49,6 +49,15 @@ try:
 except ImportError:
     SSDEEP_AVAILABLE = False
 
+    def basic_analysis(self, file_path: Path) -> List[Dict[str, Any]]:
+        """Basic file analysis - wrapper for magic_analysis"""
+        try:
+            return self.magic_analysis(file_path)
+        except Exception as e:
+            self.logger.error(f"Basic analysis failed: {e}")
+            return []
+
+
 class FileForensicsTools:
     def __init__(self, config):
         self.config = config.file_forensics
@@ -228,7 +237,13 @@ class FileForensicsTools:
             raise ValueError(f"Unknown file forensics method: {method}")
         
         try:
-            return method_map[method](file_path)
+            # Handle method name aliases
+        if method == "basic_analysis":
+            return self.basic_analysis(file_path)
+        elif method == "file_signature":
+            return self.magic_analysis(file_path)
+        
+        return method_map[method](file_path)
         except Exception as e:
             self.logger.error(f"File forensics method {method} failed for {file_path}: {e}")
             return [{

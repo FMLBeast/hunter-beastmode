@@ -110,6 +110,38 @@ class StegOrchestrator:
         self.db = database
         self.logger = logging.getLogger(__name__)
         
+        # Ensure all core tools are available
+        self.tool_registry = {}
+        
+        # Register tools by name for easy lookup
+        if self.file_tools:
+            self.tool_registry['file_forensics'] = self.file_tools
+            self.tool_registry['file_forensics'] = self.file_tools  # Alias
+        
+        if self.classic_tools:
+            self.tool_registry['classic_stego'] = self.classic_tools
+        
+        if self.image_tools:
+            self.tool_registry['image_forensics'] = self.image_tools
+        
+        if self.audio_tools:
+            self.tool_registry['audio_analysis'] = self.audio_tools
+        
+        if self.crypto_tools:
+            self.tool_registry['crypto_analysis'] = self.crypto_tools
+        
+        if self.metadata_tools:
+            self.tool_registry['metadata_carving'] = self.metadata_tools
+        
+        if self.ml_detector:
+            self.tool_registry['ml_detector'] = self.ml_detector
+        
+        if self.llm_analyzer:
+            self.tool_registry['llm_analyzer'] = self.llm_analyzer
+        
+        if self.cascade_analyzer:
+            self.tool_registry['cascade_analyzer'] = self.cascade_analyzer
+        
         # Initialize cascade analyzer
         try:
             from tools.cascade_analyzer import CascadeAnalyzer
@@ -219,7 +251,7 @@ class StegOrchestrator:
         # Basic tasks that always run
         if "basic_analysis" not in completed_set:
             tasks.append(AnalysisTask(
-                file_path=file_path, method="basic_analysis", tool_name="file_analyzer",
+                file_path=file_path, method="basic_analysis", tool_name="file_forensics",
                 priority=1, dependencies=[], estimated_time=1.0
             ))
         

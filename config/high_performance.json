@@ -1,0 +1,75 @@
+{
+  "database": {
+    "type": "sqlite",
+    "path": "steganalyzer.db",
+    "connection_pool_size": 32
+  },
+  "orchestrator": {
+    "max_concurrent_files": 12,
+    "max_cpu_workers": 8,
+    "max_gpu_workers": 0,
+    "task_timeout": 1800,
+    "memory_limit_gb": 11,
+    "temp_directory": "/tmp/steg_cascade"
+  },
+  "analysis": {
+    "quick_mode": false,
+    "deep_analysis": true,
+    "ml_analysis": false,
+    "parallel_analysis": true,
+    "enable_cascade": true
+  },
+  "cascade": {
+    "max_depth": 20,
+    "max_files": 50000,
+    "enable_zsteg": true,
+    "enable_binwalk": true,
+    "enable_foremost": true,
+    "zsteg_timeout": 45.0,
+    "binwalk_timeout": 120.0,
+    "foremost_timeout": 90.0,
+    "max_file_size": 1073741824,
+    "save_extracts": true,
+    "keep_extraction_tree": true,
+    "compress_results": true,
+    "max_concurrent_extractions": 6,
+    "memory_limit_mb": 7680,
+    "min_confidence_threshold": 0.3,
+    "skip_large_files": true,
+    "large_file_threshold_mb": 100,
+    "enable_file_type_filtering": true,
+    "priority_extensions": [
+      ".png",
+      ".jpg",
+      ".jpeg",
+      ".gif",
+      ".bmp",
+      ".wav",
+      ".mp3"
+    ]
+  },
+  "classic_stego": {
+    "steghide_enabled": true,
+    "outguess_enabled": true,
+    "zsteg_enabled": true,
+    "binwalk_enabled": true,
+    "foremost_enabled": true,
+    "parallel_execution": true,
+    "timeout_per_tool": 60.0
+  },
+  "performance": {
+    "enable_caching": true,
+    "cache_size_mb": 1024,
+    "enable_compression": true,
+    "batch_processing": true,
+    "batch_size": 80,
+    "progress_reporting_interval": 50
+  },
+  "logging": {
+    "level": "INFO",
+    "log_dir": "logs/",
+    "max_log_size_mb": 500,
+    "backup_count": 10,
+    "enable_performance_logging": true
+  }
+}
