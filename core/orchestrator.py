@@ -16,14 +16,13 @@ import multiprocessing as mp
 from core.file_analyzer import FileAnalyzer
 from core.graph_tracker import GraphTracker
 from utils.checkpoint import CheckpointManager
-
+from tools.cascade_analyzer import CascadeAnalyzer
 # Tool imports with graceful handling
 try:
     from tools.classic_stego import ClassicStegoTools
 except ImportError as e:
     print(f"Warning: ClassicStegoTools not available: {e}")
     ClassicStegoTools = None
-
 try:
     from tools.image_forensics import ImageForensicsTools
 except ImportError as e:
@@ -178,6 +177,27 @@ class StegOrchestrator:
             self.logger.error(f"Analysis failed for {file_path}: {e}")
             raise
 
+    # Add this method to create cascade analysis tasks
+    def _create_cascade_analysis_tasks(self, file_path: Path, completed: Set[str]) -> List[AnalysisTask]:
+        """Create cascade analysis tasks for recursive extraction"""
+        tasks = []
+        
+        if self.cascade_analyzer and "cascade_analyze" not in completed:
+            # Only run cascade on image files or when specifically requested
+            if (file_path.suffix.lower() in {'.png', '.bmp', '.gif', '.tiff', '.tif', '.webp'} or
+                getattr(self.config, 'force_cascade', False)):
+                
+                tasks.append(AnalysisTask(
+                    file_path=file_path,
+                    method="cascade_analyze", 
+                    tool_name="cascade_analyzer",
+                    priority=1,  # High priority for comprehensive analysis
+                    dependencies=["basic_analysis"],
+                    estimated_time=60.0  # Cascade can take a while
+                ))  
+        
+        return tasks
+    
     async def _create_analysis_plan(self, file_path: Path, file_info: Dict[str, Any]) -> List[AnalysisTask]:
         """Create analysis plan based on file type and available tools"""
         tasks = []

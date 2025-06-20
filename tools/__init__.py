@@ -1,10 +1,16 @@
 """
 Analysis tools
 """
-# Import individually to avoid heavy dependencies
-# from classic_stego import ClassicStegoTools
-# from image_forensics import ImageForensicsTools
-# from audio_analysis import AudioAnalysisTools  
-# from file_forensics import FileForensicsTools
-# from crypto_analysis import CryptoAnalysisTools
-# from metadata_carving import MetadataCarving
+# Add cascade analyzer import
+try:
+    from .cascade_analyzer import CascadeAnalyzer
+except ImportError as e:
+    print(f"Warning: CascadeAnalyzer not available: {e}")
+    CascadeAnalyzer = None
+
+# Add to __all__
+__all__ = [
+    'ClassicStegoTools', 'ImageForensicsTools', 'AudioAnalysisTools',
+    'FileForensicsTools', 'CryptoAnalysisTools', 'MetadataCarving',
+    'CascadeAnalyzer'  # Add this line
+]

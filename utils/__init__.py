@@ -1,7 +1,7 @@
 """
 Utility functions
 """
-from checkpoint import CheckpointManager  # This is checkpoint.py, not checkpoint_manager.py
+from .checkpoint import CheckpointManager
 from system_check import SystemChecker
 
 try:

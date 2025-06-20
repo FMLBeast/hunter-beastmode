@@ -10,6 +10,62 @@ from dataclasses import dataclass, asdict
 import logging
 
 @dataclass
+class CascadeConfig:
+    """Configuration for cascade analyzer"""
+    
+    # Core cascade settings
+    max_depth: int = 10
+    enable_zsteg: bool = True
+    enable_binwalk: bool = True
+    save_extracts: bool = True
+    
+    # Analysis parameters
+    zsteg_timeout: float = 30.0
+    binwalk_timeout: float = 120.0
+    max_file_size: int = 100 * 1024 * 1024  # 100MB limit
+    
+    # File type filters
+    image_extensions: List[str] = None
+    binwalk_extensions: List[str] = None
+    
+    # Extraction settings
+    extraction_dir: str = "cascade_extracts"
+    keep_extraction_tree: bool = True
+    compress_results: bool = False
+    
+    # Performance settings
+    max_concurrent_extractions: int = 3
+    memory_limit_mb: int = 2048
+    
+    # Confidence thresholds
+    min_zsteg_confidence: float = 0.3
+    min_extract_size: int = 10  # Minimum bytes to consider valid extraction
+    
+    # Exotic zsteg parameters
+    enable_exotic_params: bool = True
+    custom_zsteg_params: List[str] = None
+    
+    # Safety limits
+    max_extractions_per_file: int = 1000
+    max_total_extractions: int = 10000
+    
+    def __post_init__(self):
+        # Set default file extensions if not provided
+        if self.image_extensions is None:
+            self.image_extensions = ['.png', '.bmp', '.gif', '.tiff', '.tif', '.webp']
+        
+        if self.binwalk_extensions is None:
+            self.binwalk_extensions = [
+                '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.tif', '.webp',
+                '.pdf', '.zip', '.rar', '.7z', '.tar', '.gz', '.exe', '.bin',
+                '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx'
+            ]
+        
+        if self.custom_zsteg_params is None:
+            self.custom_zsteg_params = []
+
+        
+@dataclass
 class DatabaseConfig:
     type: str = "sqlite"  # sqlite, neo4j, postgresql
     path: str = "data/steganalyzer.db"
@@ -486,6 +542,7 @@ class Config:
             "gpu_memory_limit_mb": self.ml.gpu_memory_limit,
             "task_timeout": self.orchestrator.task_timeout
         }
+
 
 def create_default_config(output_path: str = "config/default.json"):
     """Create a default configuration file"""
