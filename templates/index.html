@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StegAnalyzer Dashboard</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <link href="/static/css/dashboard.css" rel="stylesheet">
+</head>
+<body class="bg-gray-900 text-white">
+    <!-- Header -->
+    <header class="bg-gray-800 shadow-lg border-b border-gray-700">
+        <div class="container mx-auto px-6 py-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center">
+                    <i class="fas fa-search text-blue-500 text-2xl mr-3"></i>
+                    <h1 class="text-2xl font-bold text-white">StegAnalyzer</h1>
+                    <span class="ml-4 px-3 py-1 bg-blue-600 rounded-full text-sm" id="status-badge">
+                        <i class="fas fa-circle text-green-400 mr-1"></i>
+                        Active
+                    </span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="text-sm text-gray-300" id="session-info">
+                        No active session
+                    </div>
+                    <button id="export-btn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors">
+                        <i class="fas fa-download mr-2"></i>Export Report
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="container mx-auto px-6 py-8">
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <div class="flex items-center">
+                    <div class="p-3 rounded-full bg-blue-600 bg-opacity-20">
+                        <i class="fas fa-file text-blue-500 text-xl"></i>
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-gray-400 text-sm">Files Analyzed</p>
+                        <p class="text-2xl font-bold" id="files-count">0</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <div class="flex items-center">
+                    <div class="p-3 rounded-full bg-green-600 bg-opacity-20">
+                        <i class="fas fa-check-circle text-green-500 text-xl"></i>
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-gray-400 text-sm">Findings</p>
+                        <p class="text-2xl font-bold" id="findings-count">0</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <div class="flex items-center">
+                    <div class="p-3 rounded-full bg-yellow-600 bg-opacity-20">
+                        <i class="fas fa-exclamation-triangle text-yellow-500 text-xl"></i>
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-gray-400 text-sm">High Confidence</p>
+                        <p class="text-2xl font-bold" id="high-confidence-count">0</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <div class="flex items-center">
+                    <div class="p-3 rounded-full bg-purple-600 bg-opacity-20">
+                        <i class="fas fa-clock text-purple-500 text-xl"></i>
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-gray-400 text-sm">Runtime</p>
+                        <p class="text-2xl font-bold" id="runtime">00:00</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <!-- Progress Chart -->
+            <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <h3 class="text-lg font-semibold mb-4">Analysis Progress</h3>
+                <canvas id="progressChart" height="200"></canvas>
+            </div>
+            
+            <!-- Confidence Distribution -->
+            <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <h3 class="text-lg font-semibold mb-4">Confidence Distribution</h3>
+                <canvas id="confidenceChart" height="200"></canvas>
+            </div>
+        </div>
+
+        <!-- Tables Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Recent Findings -->
+            <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <h3 class="text-lg font-semibold mb-4">
+                    <i class="fas fa-search mr-2"></i>Recent Findings
+                </h3>
+                <div class="overflow-y-auto max-h-96">
+                    <table class="w-full" id="findings-table">
+                        <thead class="text-gray-400 text-sm">
+                            <tr>
+                                <th class="text-left pb-2">Type</th>
+                                <th class="text-left pb-2">Method</th>
+                                <th class="text-left pb-2">Confidence</th>
+                                <th class="text-left pb-2">Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="findings-tbody">
+                            <tr>
+                                <td colspan="4" class="text-gray-500 text-center py-4">No findings yet</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Live Logs -->
+            <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <h3 class="text-lg font-semibold mb-4">
+                    <i class="fas fa-terminal mr-2"></i>Live Logs
+                </h3>
+                <div class="bg-gray-900 rounded p-4 font-mono text-sm overflow-y-auto max-h-96" id="logs-container">
+                    <div class="text-gray-500">Waiting for analysis to start...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 border-t border-gray-700 mt-8">
+        <div class="container mx-auto px-6 py-4">
+            <div class="flex items-center justify-between text-gray-400 text-sm">
+                <div>StegAnalyzer v1.0 - Advanced Steganography Detection Framework</div>
+                <div id="connection-status">
+                    <i class="fas fa-circle text-green-400 mr-1"></i>Connected
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

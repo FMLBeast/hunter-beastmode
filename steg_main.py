@@ -13,26 +13,60 @@ import argparse
 import json
 from datetime import datetime
 
-from core.steg_orchestrator import StegOrchestrator
+from core.orchestrator import StegOrchestrator
 from config.steg_config import Config
-from core.steg_database import DatabaseManager
+from core.database import DatabaseManager
 from core.dashboard import Dashboard
 from core.reporter import ReportGenerator
-# from utils.logger import setup_logging  # (autofixed: file missing)
-# from utils.system_check import SystemChecker  # (autofixed: file missing)
 import logging
 
-def setup_logging():
+def setup_logging(level=logging.INFO):
     logging.basicConfig(
-        level=logging.INFO,
+        level=level,
         format="%(asctime)s %(levelname)s %(name)s - %(message)s"
     )
     logging.getLogger("steg_main").info("Logging initialized.")
     
 class SystemChecker:
     @staticmethod
-    def check():
-        print("System check: [OK] (dummy checker, replace with real checks as needed)")
+    async def check_all():
+        """Check all system requirements"""
+        status = {
+            "python_version": sys.version,
+            "platform": sys.platform,
+            "tools": {},
+            "dependencies": {},
+            "gpu": {"available": False, "cuda": False}
+        }
+        
+        # Check tools
+        import subprocess
+        tools = ["steghide", "outguess", "zsteg", "binwalk", "exiftool", "strings"]
+        for tool in tools:
+            try:
+                result = subprocess.run([tool, "--version"], capture_output=True, timeout=5)
+                status["tools"][tool] = result.returncode == 0
+            except:
+                status["tools"][tool] = False
+        
+        # Check Python dependencies
+        deps = ["PIL", "numpy", "scipy", "magic", "yara"]
+        for dep in deps:
+            try:
+                __import__(dep)
+                status["dependencies"][dep] = True
+            except ImportError:
+                status["dependencies"][dep] = False
+        
+        # Check GPU
+        try:
+            import torch
+            status["gpu"]["available"] = torch.cuda.is_available()
+            status["gpu"]["cuda"] = torch.version.cuda if torch.cuda.is_available() else None
+        except ImportError:
+            pass
+        
+        return status
 
 class StegAnalyzer:
     def __init__(self, config_path: str = "config/default.json"):
@@ -70,6 +104,7 @@ class StegAnalyzer:
             report = await self.reporter.generate_report(session_id)
             
             self.logger.info(f"Analysis complete. Found {len(results)} findings.")
+            
             return {
                 "session_id": session_id,
                 "results": results,
@@ -77,30 +112,15 @@ class StegAnalyzer:
                 "dashboard_url": self.dashboard.url if self.config.dashboard.enabled else None
             }
             
-        except Exception as e:
-            self.logger.error(f"Analysis failed: {e}")
-            await self.db.update_session_status(session_id, "failed", str(e))
-            raise
         finally:
             if self.config.dashboard.enabled:
                 await self.dashboard.stop()
     
     async def analyze_directory(self, directory_path: str) -> Dict[str, Any]:
-        """Analyze all files in a directory recursively"""
+        """Analyze all files in a directory"""
         directory_path = Path(directory_path)
-        if not directory_path.exists() or not directory_path.is_dir():
-            raise NotADirectoryError(f"Directory not found: {directory_path}")
-        
-        # Get all files
-        files = []
-        for pattern in self.config.analysis.file_patterns:
-            files.extend(directory_path.rglob(pattern))
-        
-        if not files:
-            self.logger.warning(f"No files found in {directory_path}")
-            return {"results": [], "files_processed": 0}
-        
-        self.logger.info(f"Found {len(files)} files to analyze")
+        if not directory_path.exists():
+            raise FileNotFoundError(f"Directory not found: {directory_path}")
         
         # Create batch session
         session_id = await self.db.create_session(
@@ -110,58 +130,41 @@ class StegAnalyzer:
             batch_mode=True
         )
         
-        # Start dashboard
+        self.logger.info(f"Starting batch analysis session {session_id} for {directory_path}")
+        
+        # Start dashboard if enabled
         if self.config.dashboard.enabled:
             await self.dashboard.start(session_id)
         
         try:
-            # Process files in parallel batches
-            batch_size = self.config.orchestrator.max_concurrent_files
-            results = []
+            # Run directory analysis
+            results = await self.orchestrator.analyze_directory(directory_path, session_id)
             
-            for i in range(0, len(files), batch_size):
-                batch = files[i:i + batch_size]
-                batch_results = await asyncio.gather(*[
-                    self.orchestrator.analyze(file_path, session_id)
-                    for file_path in batch
-                ], return_exceptions=True)
-                
-                for file_path, result in zip(batch, batch_results):
-                    if isinstance(result, Exception):
-                        self.logger.error(f"Failed to analyze {file_path}: {result}")
-                    else:
-                        results.extend(result)
-            
-            # Generate final report
+            # Generate report
             report = await self.reporter.generate_report(session_id)
+            
+            self.logger.info(f"Batch analysis complete. Processed {results['total_files']} files.")
             
             return {
                 "session_id": session_id,
-                "files_processed": len(files),
-                "results": results,
+                "total_files": results["total_files"],
+                "results": results["results"],
                 "report_path": report["path"],
                 "dashboard_url": self.dashboard.url if self.config.dashboard.enabled else None
             }
             
-        except Exception as e:
-            self.logger.error(f"Batch analysis failed: {e}")
-            await self.db.update_session_status(session_id, "failed", str(e))
-            raise
         finally:
             if self.config.dashboard.enabled:
                 await self.dashboard.stop()
     
     async def resume_session(self, session_id: str) -> Dict[str, Any]:
-        """Resume a previously interrupted analysis session"""
+        """Resume an interrupted analysis session"""
         session = await self.db.get_session(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
         
         if session["status"] == "completed":
-            self.logger.info(f"Session {session_id} already completed")
             return await self.get_session_results(session_id)
-        
-        self.logger.info(f"Resuming session {session_id}")
         
         # Restore configuration
         self.config.update(session["config"])
@@ -176,7 +179,7 @@ class StegAnalyzer:
                 return await self._resume_batch_analysis(session_id)
             else:
                 target_path = Path(session["target_path"])
-                results = await self.orchestrator.analyze(target_path, session_id, resume=True)
+                results = await self.orchestrator.analyze(target_path, session_id)
                 report = await self.reporter.generate_report(session_id)
                 
                 return {
@@ -211,7 +214,7 @@ class StegAnalyzer:
         for i in range(0, len(incomplete_files), batch_size):
             batch = incomplete_files[i:i + batch_size]
             batch_results = await asyncio.gather(*[
-                self.orchestrator.analyze(Path(file_path), session_id, resume=True)
+                self.orchestrator.analyze(Path(file_path), session_id)
                 for file_path in batch
             ], return_exceptions=True)
             
@@ -260,7 +263,9 @@ async def main():
     parser = argparse.ArgumentParser(
         description="StegAnalyzer - Advanced Steganography Detection Framework"
     )
-    parser.add_argument("target", help="File or directory to analyze")
+    
+    # Make target optional by using nargs='?'
+    parser.add_argument("target", nargs="?", help="File or directory to analyze")
     parser.add_argument("-c", "--config", default="config/default.json", help="Configuration file")
     parser.add_argument("-o", "--output", help="Output directory for results")
     parser.add_argument("-r", "--resume", help="Resume session ID")
@@ -275,31 +280,65 @@ async def main():
     log_level = logging.DEBUG if args.verbose else logging.INFO
     setup_logging(level=log_level)
     
-    # System check
+    # Handle operations that don't require a target
     if args.check_system:
         checker = SystemChecker()
         status = await checker.check_all()
         print(json.dumps(status, indent=2))
-        return
+        return 0
+    
+    if args.list_sessions:
+        try:
+            analyzer = StegAnalyzer(args.config)
+            sessions = await analyzer.list_sessions()
+            print(json.dumps(sessions, indent=2, default=str))
+            await analyzer.cleanup()
+            return 0
+        except Exception as e:
+            print(f"Error listing sessions: {e}")
+            return 1
+    
+    if args.session_results:
+        try:
+            analyzer = StegAnalyzer(args.config)
+            results = await analyzer.get_session_results(args.session_results)
+            print(json.dumps(results, indent=2, default=str))
+            await analyzer.cleanup()
+            return 0
+        except Exception as e:
+            print(f"Error getting session results: {e}")
+            return 1
+    
+    if args.resume:
+        try:
+            analyzer = StegAnalyzer(args.config)
+            results = await analyzer.resume_session(args.resume)
+            print(f"\nAnalysis resumed!")
+            print(f"Session ID: {results['session_id']}")
+            print(f"Results found: {len(results.get('results', []))}")
+            if 'report_path' in results:
+                print(f"Report: {results['report_path']}")
+            if 'dashboard_url' in results and results['dashboard_url']:
+                print(f"Dashboard: {results['dashboard_url']}")
+            await analyzer.cleanup()
+            return 0
+        except Exception as e:
+            print(f"Error resuming session: {e}")
+            return 1
+    
+    # For analysis operations, target is required
+    if not args.target:
+        print("Error: target file or directory is required for analysis")
+        print("Use --help for usage information")
+        return 1
     
     try:
         analyzer = StegAnalyzer(args.config)
         
-        if args.list_sessions:
-            sessions = await analyzer.list_sessions()
-            print(json.dumps(sessions, indent=2, default=str))
-            return
-        
-        if args.session_results:
-            results = await analyzer.get_session_results(args.session_results)
-            print(json.dumps(results, indent=2, default=str))
-            return
-        
-        if args.resume:
-            results = await analyzer.resume_session(args.resume)
-        elif Path(args.target).is_file():
+        target_path = Path(args.target)
+        if target_path.is_file():
             results = await analyzer.analyze_file(args.target, args.output)
-        elif Path(args.target).is_dir():
+        elif target_path.is_dir():
             results = await analyzer.analyze_directory(args.target)
         else:
             print(f"Error: {args.target} is not a valid file or directory")
@@ -312,6 +351,9 @@ async def main():
             print(f"Report: {results['report_path']}")
         if 'dashboard_url' in results and results['dashboard_url']:
             print(f"Dashboard: {results['dashboard_url']}")
+        
+        await analyzer.cleanup()
+        return 0
             
     except KeyboardInterrupt:
         print("\nAnalysis interrupted by user")
@@ -319,9 +361,14 @@ async def main():
     except Exception as e:
         logging.error(f"Analysis failed: {e}")
         return 1
-    finally:
-        if 'analyzer' in locals():
-            await analyzer.cleanup()
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    try:
+        exit_code = asyncio.run(main())
+        sys.exit(exit_code)
+    except KeyboardInterrupt:
+        print("\nInterrupted by user")
+        sys.exit(130)
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        sys.exit(1)

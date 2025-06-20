@@ -1,0 +1,369 @@
+{
+  "_comment": "StegAnalyzer Default Configuration",
+  "_version": "1.0",
+  "_description": "Comprehensive steganography analysis configuration",
+
+  "database": {
+    "type": "sqlite",
+    "path": "data/steganalyzer.db",
+    "connection_pool_size": 5,
+    "query_timeout": 30,
+    "backup_enabled": true,
+    "backup_interval": 3600,
+    
+    "_postgresql_config": {
+      "postgres_host": "localhost",
+      "postgres_port": 5432,
+      "postgres_db": "steganalyzer",
+      "postgres_user": "steguser",
+      "postgres_password": "change_me"
+    },
+    
+    "_neo4j_config": {
+      "neo4j_uri": "bolt://localhost:7687",
+      "neo4j_user": "neo4j",
+      "neo4j_password": "change_me"
+    }
+  },
+
+  "orchestrator": {
+    "max_concurrent_files": 4,
+    "max_cpu_workers": 8,
+    "max_gpu_workers": 2,
+    "task_timeout": 3600,
+    "max_file_size_mb": 500,
+    "checkpoint_interval": 300,
+    "auto_scaling": true,
+    "memory_limit_mb": 8192
+  },
+
+  "analysis": {
+    "quick_mode": false,
+    "deep_analysis": true,
+    "ml_analysis": true,
+    "parallel_analysis": true,
+    "skip_large_files": false,
+    "max_analysis_time": 7200,
+    "confidence_threshold": 0.3,
+    "enable_correlation": true,
+    "statistical_analysis": true,
+    "forensic_analysis": true
+  },
+
+  "classic_stego": {
+    "steghide_enabled": true,
+    "steghide_wordlist": "wordlists/common_passwords.txt",
+    "steghide_timeout": 300,
+    "steghide_extract_all": true,
+    
+    "outguess_enabled": true,
+    "outguess_quality": 75,
+    "outguess_timeout": 180,
+    
+    "zsteg_enabled": true,
+    "zsteg_all_bits": true,
+    "zsteg_channels": "all",
+    "zsteg_timeout": 120,
+    
+    "stegseek_enabled": true,
+    "stegseek_wordlist": "wordlists/rockyou.txt",
+    "stegseek_timeout": 600,
+    
+    "binwalk_enabled": true,
+    "binwalk_extract": true,
+    "binwalk_entropy": true,
+    "binwalk_timeout": 240,
+    
+    "foremost_enabled": true,
+    "foremost_timeout": 300,
+    
+    "strings_enabled": true,
+    "strings_min_length": 6,
+    
+    "hexdump_enabled": true,
+    "hexdump_length": 8192
+  },
+
+  "image_forensics": {
+    "enabled": true,
+    "stegdetect_enabled": true,
+    "lsb_analysis_enabled": true,
+    "dct_analysis_enabled": true,
+    "noise_analysis_enabled": true,
+    "jpeg_analysis_enabled": true,
+    "png_analysis_enabled": true,
+    "metadata_extraction": true,
+    "thumbnail_analysis": true,
+    "color_analysis": true,
+    "compression_analysis": true,
+    "error_level_analysis": true,
+    "copy_move_detection": false,
+    "splice_detection": false,
+    "resampling_detection": false
+  },
+
+  "audio_analysis": {
+    "enabled": true,
+    "spectral_analysis": true,
+    "lsb_audio_enabled": true,
+    "echo_hiding_detection": true,
+    "phase_coding_detection": true,
+    "spread_spectrum_detection": true,
+    "deep_speech_enabled": false,
+    "frequency_masking": true,
+    "temporal_masking": true,
+    "metadata_analysis": true,
+    "waveform_analysis": true,
+    "fft_analysis": true,
+    "cepstral_analysis": true
+  },
+
+  "ml": {
+    "enabled": true,
+    "gpu_enabled": true,
+    "device": "auto",
+    "model_cache_size": 5,
+    "batch_size": 32,
+    "max_workers": 2,
+    "load_pretrained": true,
+    "confidence_threshold": 0.7,
+    "ensemble_voting": true,
+    "model_timeout": 300,
+    
+    "models": {
+      "cnn_steg_detector": {
+        "enabled": true,
+        "model_path": "models/cnn_steg_detector.pth",
+        "confidence_threshold": 0.8
+      },
+      "noiseprint": {
+        "enabled": true,
+        "model_path": "models/noiseprint.pth",
+        "confidence_threshold": 0.7
+      },
+      "deep_stego": {
+        "enabled": true,
+        "model_path": "models/deep_stego.pth",
+        "confidence_threshold": 0.75
+      }
+    }
+  },
+
+  "llm": {
+    "enabled": false,
+    "provider": "anthropic",
+    "api_key": "",
+    "model_name": "claude-3-sonnet-20240229",
+    "max_tokens": 2048,
+    "temperature": 0.1,
+    "timeout": 60,
+    "rate_limit": 5,
+    "cache_responses": true,
+    "explain_findings": true,
+    "suggest_analysis": true
+  },
+
+  "multimodal": {
+    "enabled": false,
+    "vision_model": "openai/clip-vit-large-patch14",
+    "text_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "cross_modal_analysis": true,
+    "semantic_analysis": true,
+    "content_similarity": true
+  },
+
+  "crypto": {
+    "entropy_analysis": true,
+    "pattern_detection": true,
+    "key_search": true,
+    "compression_analysis": true,
+    "randomness_tests": true,
+    "frequency_analysis": true,
+    "autocorrelation_analysis": true,
+    "block_analysis": true,
+    "encoding_detection": true,
+    
+    "entropy_window_size": 8192,
+    "pattern_min_length": 4,
+    "pattern_max_length": 32,
+    "chi_square_threshold": 0.01,
+    "autocorr_threshold": 0.3,
+    
+    "hashcat_enabled": false,
+    "hashcat_wordlist": "wordlists/passwords.txt",
+    "hashcat_timeout": 1800
+  },
+
+  "file_forensics": {
+    "magic_analysis": true,
+    "signature_verification": true,
+    "header_analysis": true,
+    "footer_analysis": true,
+    "polyglot_detection": true,
+    "file_carving": true,
+    "bulk_extractor": true,
+    "photorec_enabled": false,
+    "pdf_analysis": true,
+    "office_analysis": true,
+    "archive_analysis": true,
+    "overlay_detection": true,
+    "slack_space_analysis": true
+  },
+
+  "cloud": {
+    "enabled": false,
+    "virustotal_api_key": "",
+    "virustotal_enabled": false,
+    "hashlookup_enabled": true,
+    "nsrl_enabled": true,
+    "hybrid_analysis_api_key": "",
+    "hybrid_analysis_enabled": false,
+    "malware_bazaar_enabled": true,
+    "timeout": 30,
+    "rate_limit": 1.0,
+    "cache_results": true,
+    "cache_timeout": 86400
+  },
+
+  "dashboard": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 8080,
+    "debug": false,
+    "auto_open": true,
+    "refresh_interval": 2,
+    "max_log_entries": 1000,
+    "real_time_updates": true,
+    "authentication": false,
+    "ssl_enabled": false,
+    "ssl_cert": "",
+    "ssl_key": ""
+  },
+
+  "report": {
+    "output_dir": "reports/",
+    "format": "html",
+    "include_metadata": true,
+    "include_raw_data": false,
+    "include_screenshots": true,
+    "template_dir": "templates/",
+    "auto_open": true,
+    "compress_reports": false,
+    "max_report_size_mb": 100,
+    
+    "html_report": {
+      "include_charts": true,
+      "interactive": true,
+      "embed_images": false,
+      "theme": "dark"
+    },
+    
+    "pdf_report": {
+      "page_size": "A4",
+      "orientation": "portrait",
+      "include_toc": true,
+      "watermark": false
+    }
+  },
+
+  "logging": {
+    "level": "INFO",
+    "log_dir": "logs/",
+    "max_size_mb": 100,
+    "backup_count": 5,
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "file_logging": true,
+    "console_logging": true,
+    "structured_logging": false,
+    "log_performance": true,
+    "log_findings": true,
+    "sensitive_data_masking": true
+  },
+
+  "performance": {
+    "enable_profiling": false,
+    "memory_monitoring": true,
+    "cpu_monitoring": true,
+    "gpu_monitoring": true,
+    "disk_monitoring": true,
+    "network_monitoring": false,
+    "performance_alerts": true,
+    "max_memory_usage": 0.8,
+    "max_cpu_usage": 0.9
+  },
+
+  "security": {
+    "sandbox_analysis": false,
+    "file_size_limit": 1073741824,
+    "temp_file_cleanup": true,
+    "secure_temp_dir": true,
+    "validate_file_types": true,
+    "quarantine_suspicious": false,
+    "encryption_at_rest": false,
+    "audit_logging": true
+  },
+
+  "advanced": {
+    "experimental_features": false,
+    "beta_tools": false,
+    "custom_signatures": "signatures/custom.yara",
+    "plugin_directory": "plugins/",
+    "user_scripts": "scripts/",
+    "research_mode": false,
+    "developer_mode": false,
+    "telemetry": false
+  },
+
+  "wordlists": {
+    "default": "wordlists/common_passwords.txt",
+    "steganography": "wordlists/stego_passwords.txt",
+    "comprehensive": "wordlists/rockyou.txt",
+    "custom": "wordlists/custom.txt"
+  },
+
+  "file_types": {
+    "images": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"],
+    "audio": [".mp3", ".wav", ".flac", ".ogg", ".m4a", ".wma"],
+    "video": [".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv"],
+    "documents": [".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"],
+    "archives": [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2"],
+    "executables": [".exe", ".dll", ".so", ".dylib", ".app"],
+    "text": [".txt", ".csv", ".json", ".xml", ".html", ".css", ".js"]
+  },
+
+  "analysis_profiles": {
+    "quick": {
+      "description": "Fast analysis with basic tools",
+      "classic_stego": {"steghide_enabled": true, "binwalk_enabled": true},
+      "ml": {"enabled": false},
+      "crypto": {"entropy_analysis": true},
+      "timeout": 300
+    },
+    
+    "standard": {
+      "description": "Balanced analysis with most tools",
+      "classic_stego": {"steghide_enabled": true, "outguess_enabled": true, "binwalk_enabled": true},
+      "ml": {"enabled": true, "gpu_enabled": true},
+      "crypto": {"entropy_analysis": true, "pattern_detection": true},
+      "timeout": 1800
+    },
+    
+    "comprehensive": {
+      "description": "Deep analysis with all available tools",
+      "classic_stego": {"steghide_enabled": true, "outguess_enabled": true, "zsteg_enabled": true, "binwalk_enabled": true},
+      "ml": {"enabled": true, "gpu_enabled": true, "ensemble_voting": true},
+      "crypto": {"entropy_analysis": true, "pattern_detection": true, "key_search": true},
+      "cloud": {"enabled": true},
+      "timeout": 7200
+    },
+    
+    "forensic": {
+      "description": "Forensic analysis focused on evidence preservation",
+      "file_forensics": {"magic_analysis": true, "signature_verification": true, "file_carving": true},
+      "image_forensics": {"metadata_extraction": true, "thumbnail_analysis": true},
+      "crypto": {"entropy_analysis": true, "frequency_analysis": true},
+      "audit_trail": true,
+      "preserve_evidence": true
+    }
+  }
+}

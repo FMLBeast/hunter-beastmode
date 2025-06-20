@@ -1,0 +1,55 @@
+
+.finding-row:hover {
+    background-color: rgba(55, 65, 81, 0.5);
+}
+
+.confidence-high {
+    color: #ef4444;
+}
+
+.confidence-medium {
+    color: #f59e0b;
+}
+
+.confidence-low {
+    color: #10b981;
+}
+
+.log-entry {
+    margin-bottom: 4px;
+    padding: 2px 0;
+}
+
+.log-info {
+    color: #3b82f6;
+}
+
+.log-warning {
+    color: #f59e0b;
+}
+
+.log-error {
+    color: #ef4444;
+}
+
+.log-success {
+    color: #10b981;
+}
+
+#logs-container {
+    scrollbar-width: thin;
+    scrollbar-color: #4b5563 #1f2937;
+}
+
+#logs-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+#logs-container::-webkit-scrollbar-track {
+    background: #1f2937;
+}
+
+#logs-container::-webkit-scrollbar-thumb {
+    background: #4b5563;
+    border-radius: 3px;
+}
