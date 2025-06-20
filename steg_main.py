@@ -277,6 +277,7 @@ async def main():
     parser.add_argument("-s", "--session-results", help="Get results for session ID")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     parser.add_argument("--check-system", action="store_true", help="Check system requirements")
+    parser.add_argument('--cascade', action='store_true', help='Enable recursive cascade analysis (zsteg+binwalk)')
     
     args = parser.parse_args()
     
