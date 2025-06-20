@@ -35,7 +35,7 @@ class AnalysisTask:
 class StegOrchestrator:
     """Main orchestrator for steganography analysis"""
     
-    def __init__(self, config):
+    def __init__(self, config, database=None):
         self.config = config
         self.logger = logging.getLogger(__name__)
         
