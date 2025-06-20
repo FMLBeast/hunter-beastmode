@@ -12,16 +12,16 @@ from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import multiprocessing as mp
 
-from tools.classic_stego_tools import ClassicStegoTools
-from tools.image_forensics_tools import ImageForensicsTools
-from tools.audio_analysis_tools import AudioAnalysisTools
-from tools.file_forensics_tools import FileForensicsTools
-from tools.crypto_analysis_tools import CryptoAnalysisTools
+from tools.classic_stego import ClassicStegoTools
+from tools.image_forensics import ImageForensicsTools
+from tools.audio_analysis import AudioAnalysisTools
+from tools.file_forensics import FileForensicsTools
+from tools.crypto_analysis import CryptoAnalysisTools
 from tools.metadata_carving import MetadataCarving
 from ai.ml_detector import MLStegDetector
 from ai.llm_analyzer import LLMAnalyzer
 from ai.multimodal_classifier import MultimodalClassifier
-from cloud.cloud_integrations import CloudIntegrations
+from cloud.integrations import CloudIntegrations
 from core.file_analyzer import FileAnalyzer
 from core.graph_tracker import GraphTracker
 from utils.gpu_manager import GPUManager

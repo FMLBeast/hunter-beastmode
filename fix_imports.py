@@ -1,60 +1,53 @@
 import os
 import re
 
-# Map incorrect import paths to correct ones
-REPLACEMENTS = {
-    r'from\s+core\.orchestrator\s+import\s+StegOrchestrator':      'from core.steg_orchestrator import StegOrchestrator',
-    r'from\s+core\.config\s+import\s+Config':                      'from config.steg_config import Config',
-    r'from\s+core\.database\s+import\s+Database':                  'from core.steg_database import Database',
+# Mapping of old import name to correct module filename (minus .py)
+moved = {
+    "core.orchestrator":      "core.steg_orchestrator",
+    "core.config":            "config.steg_config",
+    "core.database":          "core.steg_database",
+    "tools.classic_stego":    "tools.classic_stego_tools",
+    "tools.image_forensics":  "tools.image_forensics_tools",
+    "tools.audio_analysis":   "tools.audio_analysis_tools",
+    "tools.file_forensics":   "tools.file_forensics_tools",
+    "tools.crypto_analysis":  "tools.crypto_analysis_tools",
+    "ai.ml":                  "ai.ml_detector",
+    "ai.llm":                 "ai.llm_analyzer",
+    "ai.multimodal":          "ai.multimodal_classifier",
+    "cloud.integrations":     "cloud.cloud_integrations",
+    "utils.gpu":              "utils.gpu_manager",
+    # Add more if needed
 }
 
-# List of imports to comment out if the file doesn't exist
-REMOVALS = [
-    r'from\s+utils\.logger\s+import\s+.*',
-    r'from\s+utils\.system_check\s+import\s+.*',
-]
+# Build regex for any "from <module> import ..." or "import <module>"
+pattern = re.compile(r"from\s+([a-zA-Z0-9_\.]+)\s+import\s+|import\s+([a-zA-Z0-9_\.]+)")
 
-def file_exists_from_import(import_line):
-    """
-    Checks if an import line (e.g., from core.steg_database import Database) matches a real file.
-    """
-    m = re.match(r'from\s+([a-zA-Z0-9_\.]+)\s+import\s+.*', import_line)
-    if m:
-        parts = m.group(1).split('.')
-        path = os.path.join(*parts) + '.py'
-        return os.path.exists(path)
-    return True  # Default to True if not standard pattern
+def fix_imports_in_file(fpath):
+    try:
+        with open(fpath, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+    except UnicodeDecodeError:
+        with open(fpath, 'r', encoding='latin1') as f:
+            lines = f.readlines()
+    orig_lines = list(lines)
+    modified = False
+    for i, line in enumerate(lines):
+        m = pattern.search(line)
+        if m:
+            modname = m.group(1) or m.group(2)
+            if modname in moved:
+                fixed = line.replace(modname, moved[modname])
+                if fixed != line:
+                    lines[i] = fixed
+                    modified = True
+    if modified:
+        print(f"[fix] {fpath}")
+        with open(fpath + ".bak", 'w', encoding='utf-8') as f:
+            f.writelines(orig_lines)
+        with open(fpath, 'w', encoding='utf-8') as f:
+            f.writelines(lines)
 
 for root, dirs, files in os.walk('.'):
     for fname in files:
         if fname.endswith('.py'):
-            fpath = os.path.join(root, fname)
-            with open(fpath, 'r') as f:
-                lines = f.readlines()
-
-            orig_lines = list(lines)
-            modified = False
-            for i, line in enumerate(lines):
-                # Do replacements for known bad imports
-                for bad, good in REPLACEMENTS.items():
-                    if re.search(bad, line):
-                        lines[i] = re.sub(bad, good, line)
-                        modified = True
-
-                # Comment out imports for modules that do not exist
-                for bad_pattern in REMOVALS:
-                    if re.search(bad_pattern, line):
-                        if not file_exists_from_import(line):
-                            lines[i] = f"# {line.rstrip()}  # (autofixed: file missing)\n"
-                            modified = True
-
-            if modified:
-                print(f"[autofix] {fpath}")
-                # Backup old file
-                bak = fpath + ".bak"
-                if not os.path.exists(bak):
-                    with open(bak, 'w') as fbak:
-                        fbak.writelines(orig_lines)
-                # Write new file
-                with open(fpath, 'w') as fout:
-                    fout.writelines(lines)
+            fix_imports_in_file(os.path.join(root, fname))
