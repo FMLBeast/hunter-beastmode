@@ -54,6 +54,12 @@ except ImportError as e:
     print(f"Warning: MetadataCarving not available: {e}")
     MetadataCarving = None
 
+try:
+    from tools.cascade_tool_integration import CascadeAnalyzer
+except ImportError as e:
+    print(f"Warning: CascadeAnalyzer not available: {e}")
+    CascadeAnalyzer = None
+
 # AI components (optional)
 try:
     from ai.ml_detector import MLStegDetector
@@ -112,6 +118,7 @@ class StegOrchestrator:
         self.file_tools = FileForensicsTools(config) if FileForensicsTools else None
         self.crypto_tools = CryptoAnalysisTools(config) if CryptoAnalysisTools else None
         self.metadata_tools = MetadataCarving(config) if MetadataCarving else None
+        self.cascade_analyzer = CascadeAnalyzer(config) if CascadeAnalyzer else None
         
         # Initialize AI components (only if available)
         self.ml_detector = MLStegDetector(config) if MLStegDetector else None
@@ -139,15 +146,22 @@ class StegOrchestrator:
                         f"file={self.file_tools is not None}, "
                         f"crypto={self.crypto_tools is not None}")
 
-    async def analyze(self, file_path: Path, session_id: str) -> List[Dict[str, Any]]:
-        """Main analysis orchestration method"""
+    async def analyze(self, file_path: Path, session_id: str, use_cascade: bool = False) -> List[Dict[str, Any]]:
+        """Main analysis orchestration method, now supports cascade analysis"""
         self.logger.info(f"Starting analysis of {file_path}")
-        
         try:
+            if use_cascade and self.cascade_analyzer:
+                self.logger.info(f"Running cascade analysis on {file_path}")
+                results = await self.cascade_analyzer.cascade_analyze(file_path, session_id)
+                # Optionally store results in DB
+                for result in results:
+                    await self.db.store_analysis_result(session_id, 'cascade_analyze', result)
+                return results
+            
             # Basic file analysis first
             file_info = await self.file_analyzer.analyze_file(file_path)
             file_info["file_path"] = str(file_path)
-            await self.db.store_file_analysis(session_id, file_info)
+            await self.db.add_file(session_id, str(file_path), file_info)
             
             # Create analysis plan based on file type
             tasks = await self._create_analysis_plan(file_path, file_info)
@@ -417,8 +431,10 @@ class StegOrchestrator:
         try:
             if hasattr(self.llm_analyzer, 'analyze_file'):
                 return await self.llm_analyzer.analyze_file(task.file_path)
+            elif hasattr(self.llm_analyzer, 'execute'):
+                return self.llm_analyzer.execute('analyze', task.file_path)
             elif hasattr(self.llm_analyzer, 'analyze'):
-                return await self.llm_analyzer.analyze(task.file_path)
+                return await self._run_llm_tool(task)
         except Exception as e:
             self.logger.error(f"LLM tool error: {e}")
         return []    
@@ -499,5 +515,6 @@ class StegOrchestrator:
             'llm_analyzer': self.llm_analyzer is not None,
             'multimodal_classifier': self.multimodal_classifier is not None,
             'cloud_integrations': self.cloud is not None,
-            'gpu_manager': self.gpu_manager is not None
+            'gpu_manager': self.gpu_manager is not None,
+            'cascade_analyzer': self.cascade_analyzer is not None
         }
