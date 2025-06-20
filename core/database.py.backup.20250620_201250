@@ -29,8 +29,9 @@ except ImportError:
 
 class DatabaseManager:
     def __init__(self, config):
-        # Ensure config is a dictionary - THIS IS THE KEY FIX
+        # Ensure config is a dictionary
         if not isinstance(config, dict):
+            # Try to convert from object to dict if possible
             if hasattr(config, '__dict__'):
                 config = vars(config)
             elif hasattr(config, 'to_dict'):
@@ -46,12 +47,13 @@ class DatabaseManager:
         self.postgres_pool = None
         self.neo4j_driver = None
         
-        # Use config.get() for safe access
+        # Use config['type'] instead of config.type
         self.db_type = self.config.get('type', 'sqlite').lower()
         
         # Initialize database synchronously to avoid cursor issues
         if self.db_type == "sqlite":
             self._init_sqlite_sync()
+        # For other types, we'll initialize async later
     
     def _init_sqlite_sync(self):
         """Initialize SQLite database synchronously"""
@@ -171,6 +173,27 @@ class DatabaseManager:
                 VALUES (?, ?, ?, ?, 'running')
             """, (session_id, target_path, target_dir, json.dumps(config or {})))
             self.sqlite_conn.commit()
+            
+        elif self.db_type == "postgresql":
+            async with self.postgres_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO sessions (id, target_path, target_dir, config, status)
+                    VALUES ($1, $2, $3, $4, 'running')
+                """, session_id, target_path, target_dir, config or {})
+                
+        elif self.db_type == "neo4j":
+            async with self.neo4j_driver.session() as session:
+                await session.run("""
+                    CREATE (s:Session {
+                        id: $session_id, 
+                        target_path: $target_path, 
+                        target_dir: $target_dir,
+                        config: $config,
+                        status: 'running',
+                        created_at: datetime()
+                    })
+                """, session_id=session_id, target_path=target_path, 
+                target_dir=target_dir, config=config or {})
         
         self.logger.info(f"Created session {session_id} for {target_path}")
         return session_id
@@ -194,6 +217,44 @@ class DatabaseManager:
                 json.dumps(file_info.get('metadata', {}))
             ))
             self.sqlite_conn.commit()
+            
+        elif self.db_type == "postgresql":
+            async with self.postgres_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO files (id, session_id, file_path, file_hash, file_size, file_type, mime_type, metadata)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """, 
+                    file_id, session_id, file_path,
+                    file_info.get('hash'),
+                    file_info.get('size'),
+                    file_info.get('type'),
+                    file_info.get('mime_type'),
+                    file_info.get('metadata', {})
+                )
+                
+        elif self.db_type == "neo4j":
+            async with self.neo4j_driver.session() as session:
+                await session.run("""
+                    MATCH (s:Session {id: $session_id})
+                    CREATE (f:File {
+                        id: $file_id,
+                        path: $file_path,
+                        hash: $hash,
+                        size: $size,
+                        type: $type,
+                        mime_type: $mime_type,
+                        metadata: $metadata,
+                        created_at: datetime()
+                    })
+                    CREATE (s)-[:CONTAINS]->(f)
+                """, 
+                    session_id=session_id, file_id=file_id, file_path=file_path,
+                    hash=file_info.get('hash'),
+                    size=file_info.get('size'),
+                    type=file_info.get('type'),
+                    mime_type=file_info.get('mime_type'),
+                    metadata=file_info.get('metadata', {})
+                )
         
         return file_id
     
@@ -219,11 +280,58 @@ class DatabaseManager:
                 json.dumps(finding.get('metadata', {}))
             ))
             self.sqlite_conn.commit()
+            
+        elif self.db_type == "postgresql":
+            async with self.postgres_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO findings (id, session_id, file_id, tool_name, method, finding_type,
+                                        confidence, description, evidence, extracted_content, metadata)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                """,
+                    finding_id, session_id, file_id,
+                    finding.get('tool_name'),
+                    finding.get('method'),
+                    finding.get('type'),
+                    finding.get('confidence'),
+                    finding.get('description'),
+                    finding.get('evidence'),
+                    finding.get('extracted_content'),
+                    finding.get('metadata', {})
+                )
+                
+        elif self.db_type == "neo4j":
+            async with self.neo4j_driver.session() as session:
+                await session.run("""
+                    MATCH (f:File {id: $file_id})
+                    CREATE (fn:Finding {
+                        id: $finding_id,
+                        tool_name: $tool_name,
+                        method: $method,
+                        type: $type,
+                        confidence: $confidence,
+                        description: $description,
+                        evidence: $evidence,
+                        extracted_content: $extracted_content,
+                        metadata: $metadata,
+                        created_at: datetime()
+                    })
+                    CREATE (f)-[:CONTAINS_FINDING]->(fn)
+                """,
+                    file_id=file_id, finding_id=finding_id,
+                    tool_name=finding.get('tool_name'),
+                    method=finding.get('method'),
+                    type=finding.get('type'),
+                    confidence=finding.get('confidence'),
+                    description=finding.get('description'),
+                    evidence=finding.get('evidence'),
+                    extracted_content=finding.get('extracted_content'),
+                    metadata=finding.get('metadata', {})
+                )
         
         return finding_id
     
     async def store_file_analysis(self, session_id: str, file_info: dict):
-        """Store or update file analysis results - THIS IS THE MISSING METHOD"""
+        """Store or update file analysis results"""
         file_path = file_info.get('file_path')
         if not file_path:
             self.logger.error("store_file_analysis: file_info must include 'file_path'.")
@@ -238,6 +346,18 @@ class DatabaseManager:
                 cursor.execute("SELECT id FROM files WHERE session_id = ? AND file_path = ?", (session_id, file_path))
                 row = cursor.fetchone()
                 file_id = row[0] if row else None
+            elif self.db_type == "postgresql":
+                async with self.postgres_pool.acquire() as conn:
+                    row = await conn.fetchrow("SELECT id FROM files WHERE session_id = $1 AND file_path = $2", session_id, file_path)
+                    file_id = row['id'] if row else None
+            elif self.db_type == "neo4j":
+                async with self.neo4j_driver.session() as session:
+                    result = await session.run("""
+                        MATCH (s:Session {id: $session_id})-[:CONTAINS]->(f:File {path: $file_path})
+                        RETURN f.id AS id
+                    """, session_id=session_id, file_path=file_path)
+                    record = await result.single()
+                    file_id = record["id"] if record else None
         
         # If file does not exist, add it
         if not file_id:
@@ -258,6 +378,32 @@ class DatabaseManager:
                 file_id
             ))
             self.sqlite_conn.commit()
+        elif self.db_type == "postgresql":
+            async with self.postgres_pool.acquire() as conn:
+                await conn.execute("""
+                    UPDATE files SET file_hash = $1, file_size = $2, file_type = $3, mime_type = $4, metadata = $5
+                    WHERE id = $6
+                """,
+                    file_info.get('hash'),
+                    file_info.get('size'),
+                    file_info.get('type'),
+                    file_info.get('mime_type'),
+                    file_info.get('metadata', {}),
+                    file_id
+                )
+        elif self.db_type == "neo4j":
+            async with self.neo4j_driver.session() as session:
+                await session.run("""
+                    MATCH (f:File {id: $file_id})
+                    SET f.hash = $hash, f.size = $size, f.type = $type, f.mime_type = $mime_type, f.metadata = $metadata
+                """,
+                    file_id=file_id,
+                    hash=file_info.get('hash'),
+                    size=file_info.get('size'),
+                    type=file_info.get('type'),
+                    mime_type=file_info.get('mime_type'),
+                    metadata=file_info.get('metadata', {})
+                )
         
         self.logger.info(f"store_file_analysis: Updated file analysis for file_id={file_id}, session_id={session_id}")
         return file_id
@@ -266,6 +412,7 @@ class DatabaseManager:
         """Return a list of completed analysis methods for a given file"""
         completed_methods = set()
         
+        # Try to use file_path first, fallback to file_id
         if self.db_type == "sqlite":
             cursor = self.sqlite_conn.cursor()
             if session_id:
@@ -276,6 +423,27 @@ class DatabaseManager:
                 file_id = file_path_or_id
             cursor.execute("SELECT method FROM findings WHERE file_id = ?", (file_id,))
             completed_methods = {row[0] for row in cursor.fetchall()}
+        elif self.db_type == "postgresql":
+            async with self.postgres_pool.acquire() as conn:
+                file_id = file_path_or_id
+                if session_id:
+                    row = await conn.fetchrow("SELECT id FROM files WHERE session_id = $1 AND file_path = $2", session_id, file_path_or_id)
+                    file_id = row['id'] if row else file_path_or_id
+                rows = await conn.fetch("SELECT method FROM findings WHERE file_id = $1", file_id)
+                completed_methods = {row['method'] for row in rows}
+        elif self.db_type == "neo4j":
+            async with self.neo4j_driver.session() as session:
+                file_id = file_path_or_id
+                if session_id:
+                    result = await session.run("""
+                        MATCH (s:Session {id: $session_id})-[:CONTAINS]->(f:File {path: $file_path}) RETURN f.id AS id
+                    """, session_id=session_id, file_path=file_path_or_id)
+                    record = await result.single()
+                    file_id = record["id"] if record else file_path_or_id
+                result = await session.run("""
+                    MATCH (f:File {id: $file_id})-[:CONTAINS_FINDING]->(fn:Finding) RETURN fn.method AS method
+                """, file_id=file_id)
+                completed_methods = {record["method"] async for record in result}
         
         return list(completed_methods)
     
@@ -298,6 +466,32 @@ class DatabaseManager:
                     finding['metadata'] = json.loads(finding['metadata'])
                 results.append(finding)
             return results
+            
+        elif self.db_type == "postgresql":
+            async with self.postgres_pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT f.*, finding.*
+                    FROM findings finding
+                    JOIN files f ON finding.file_id = f.id
+                    WHERE finding.session_id = $1
+                    ORDER BY finding.created_at DESC
+                """, session_id)
+                return [dict(row) for row in rows]
+                
+        elif self.db_type == "neo4j":
+            async with self.neo4j_driver.session() as session:
+                result = await session.run("""
+                    MATCH (s:Session {id: $session_id})-[:CONTAINS]->(f:File)-[:CONTAINS_FINDING]->(fn:Finding)
+                    RETURN f, fn
+                    ORDER BY fn.created_at DESC
+                """, session_id=session_id)
+                
+                results = []
+                async for record in result:
+                    file_data = dict(record["f"])
+                    finding_data = dict(record["fn"])
+                    results.append({**file_data, **finding_data})
+                return results
     
     async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get session information"""
@@ -311,6 +505,17 @@ class DatabaseManager:
                     session['config'] = json.loads(session['config'])
                 return session
             return None
+            
+        elif self.db_type == "postgresql":
+            async with self.postgres_pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT * FROM sessions WHERE id = $1", session_id)
+                return dict(row) if row else None
+                
+        elif self.db_type == "neo4j":
+            async with self.neo4j_driver.session() as session:
+                result = await session.run("MATCH (s:Session {id: $session_id}) RETURN s", session_id=session_id)
+                record = await result.single()
+                return dict(record["s"]) if record else None
     
     async def list_sessions(self) -> List[Dict[str, Any]]:
         """List all sessions"""
@@ -324,6 +529,16 @@ class DatabaseManager:
                     session['config'] = json.loads(session['config'])
                 sessions.append(session)
             return sessions
+            
+        elif self.db_type == "postgresql":
+            async with self.postgres_pool.acquire() as conn:
+                rows = await conn.fetch("SELECT * FROM sessions ORDER BY created_at DESC")
+                return [dict(row) for row in rows]
+                
+        elif self.db_type == "neo4j":
+            async with self.neo4j_driver.session() as session:
+                result = await session.run("MATCH (s:Session) RETURN s ORDER BY s.created_at DESC")
+                return [dict(record["s"]) async for record in result]
     
     async def store_checkpoint(self, session_id: str, checkpoint_data: dict):
         """Store analysis checkpoint"""
@@ -336,6 +551,25 @@ class DatabaseManager:
                 VALUES (?, ?, ?)
             """, (checkpoint_id, session_id, json.dumps(checkpoint_data)))
             self.sqlite_conn.commit()
+            
+        elif self.db_type == "postgresql":
+            async with self.postgres_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO checkpoints (id, session_id, checkpoint_data)
+                    VALUES ($1, $2, $3)
+                """, checkpoint_id, session_id, checkpoint_data)
+                
+        elif self.db_type == "neo4j":
+            async with self.neo4j_driver.session() as session:
+                await session.run("""
+                    MATCH (s:Session {id: $session_id})
+                    CREATE (c:Checkpoint {
+                        id: $checkpoint_id,
+                        data: $checkpoint_data,
+                        created_at: datetime()
+                    })
+                    CREATE (s)-[:HAS_CHECKPOINT]->(c)
+                """, session_id=session_id, checkpoint_id=checkpoint_id, checkpoint_data=checkpoint_data)
         
         return checkpoint_id
     
@@ -355,6 +589,27 @@ class DatabaseManager:
                 checkpoint['checkpoint_data'] = json.loads(checkpoint['checkpoint_data'])
                 return checkpoint
             return None
+            
+        elif self.db_type == "postgresql":
+            async with self.postgres_pool.acquire() as conn:
+                row = await conn.fetchrow("""
+                    SELECT * FROM checkpoints 
+                    WHERE session_id = $1 
+                    ORDER BY created_at DESC 
+                    LIMIT 1
+                """, session_id)
+                return dict(row) if row else None
+                
+        elif self.db_type == "neo4j":
+            async with self.neo4j_driver.session() as session:
+                result = await session.run("""
+                    MATCH (s:Session {id: $session_id})-[:HAS_CHECKPOINT]->(c:Checkpoint)
+                    RETURN c
+                    ORDER BY c.created_at DESC
+                    LIMIT 1
+                """, session_id=session_id)
+                record = await result.single()
+                return dict(record["c"]) if record else None
     
     async def store_analysis_summary(self, session_id: str, summary: dict):
         """Store analysis summary"""
@@ -367,6 +622,25 @@ class DatabaseManager:
                 VALUES (?, ?, ?)
             """, (summary_id, session_id, json.dumps(summary)))
             self.sqlite_conn.commit()
+            
+        elif self.db_type == "postgresql":
+            async with self.postgres_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO analysis_summary (id, session_id, summary_data)
+                    VALUES ($1, $2, $3)
+                """, summary_id, session_id, summary)
+                
+        elif self.db_type == "neo4j":
+            async with self.neo4j_driver.session() as session:
+                await session.run("""
+                    MATCH (s:Session {id: $session_id})
+                    CREATE (sum:Summary {
+                        id: $summary_id,
+                        data: $summary,
+                        created_at: datetime()
+                    })
+                    CREATE (s)-[:HAS_SUMMARY]->(sum)
+                """, session_id=session_id, summary_id=summary_id, summary=summary)
         
         return summary_id
     
@@ -375,7 +649,15 @@ class DatabaseManager:
         try:
             if self.sqlite_conn:
                 self.sqlite_conn.close()
+                
+            if self.postgres_pool:
+                await self.postgres_pool.close()
+                
+            if self.neo4j_driver:
+                await self.neo4j_driver.close()
+                
             self.logger.info("Database connections closed")
+            
         except Exception as e:
             self.logger.error(f"Error closing database connections: {e}")
     
