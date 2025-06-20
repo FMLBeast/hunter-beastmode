@@ -266,6 +266,14 @@ class Config:
     def __init__(self, config_path: str = None):
         self.config_path = config_path or "config/default.json"
         
+
+        # Cascade Analysis Configuration
+        self.cascade_mode = False
+        self.cascade_max_depth = 10
+        self.cascade_max_files = 5000
+        self.cascade_enable_zsteg = True
+        self.cascade_enable_binwalk = True
+        self.cascade_output_dir = "cascade_analysis"
         # Initialize with defaults
         self.database = DatabaseConfig()
         self.orchestrator = OrchestratorConfig()

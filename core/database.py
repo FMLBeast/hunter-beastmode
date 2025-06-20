@@ -223,6 +223,20 @@ class DatabaseManager:
         return finding_id
     
   
+    
+    async def mark_task_complete(self, session_id: str, file_path: Path, method: str):
+        """Mark analysis task as complete"""
+        try:
+            if self.db_type == "sqlite" and self.sqlite_conn:
+                cursor = self.sqlite_conn.cursor()
+                cursor.execute(
+                    "INSERT OR REPLACE INTO task_completion (session_id, file_path, method, completed_at) VALUES (?, ?, ?, ?)",
+                    (session_id, str(file_path), method, datetime.now(timezone.utc).isoformat())
+                )
+                self.sqlite_conn.commit()
+        except Exception as e:
+            self.logger.error(f"Error marking task complete: {e}")
+
     async def store_analysis_result(self, session_id: str, method: str, results: list):
         """Store analysis results from tools (fixed version)"""
         if not results:

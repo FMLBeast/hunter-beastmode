@@ -110,6 +110,15 @@ class StegOrchestrator:
         self.db = database
         self.logger = logging.getLogger(__name__)
         
+        # Initialize cascade analyzer
+        try:
+            from tools.cascade_analyzer import CascadeAnalyzer
+            self.cascade_analyzer = CascadeAnalyzer(config)
+            self.logger.info("Cascade analyzer initialized")
+        except ImportError:
+            self.cascade_analyzer = None
+            self.logger.warning("Cascade analyzer not available")
+        
         # Initialize tool managers (only if available)
         self.classic_tools = ClassicStegoTools(config) if ClassicStegoTools else None
         self.image_tools = ImageForensicsTools(config) if ImageForensicsTools else None

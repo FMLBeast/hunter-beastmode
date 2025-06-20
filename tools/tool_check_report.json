@@ -1,0 +1,311 @@
+{
+  "timestamp": "Sat Jun 21 01:18:14 AM CEST 2025",
+  "results": {
+    "system_tools": {
+      "steghide": {
+        "available": true,
+        "version": "0.5.1",
+        "required": true,
+        "description": "Hide/extract data in image files"
+      },
+      "outguess": {
+        "available": false,
+        "version": null,
+        "required": true,
+        "description": "JPEG steganography tool"
+      },
+      "zsteg": {
+        "available": true,
+        "version": "Available",
+        "required": true,
+        "description": "PNG/BMP steganography detection"
+      },
+      "binwalk": {
+        "available": true,
+        "version": "Available",
+        "required": true,
+        "description": "Firmware analysis and file extraction"
+      },
+      "foremost": {
+        "available": true,
+        "version": "1.5.7",
+        "required": true,
+        "description": "File carving tool"
+      },
+      "exiftool": {
+        "available": true,
+        "version": "12.40",
+        "required": true,
+        "description": "Metadata extraction tool"
+      },
+      "file": {
+        "available": true,
+        "version": "5.41",
+        "required": true,
+        "description": "File type identification"
+      },
+      "strings": {
+        "available": true,
+        "version": "2.38",
+        "required": true,
+        "description": "Extract text strings from files"
+      },
+      "hexdump": {
+        "available": true,
+        "version": "Available",
+        "required": true,
+        "description": "Hex dump utility"
+      },
+      "ffmpeg": {
+        "available": true,
+        "version": "4.4.2",
+        "required": false,
+        "description": "Audio/video processing"
+      },
+      "tesseract": {
+        "available": true,
+        "version": "4.1.1",
+        "required": false,
+        "description": "OCR engine"
+      }
+    },
+    "python_packages": {
+      "numpy": {
+        "available": true,
+        "version": "1.25.2",
+        "required": true,
+        "description": "Numerical computing"
+      },
+      "opencv-python": {
+        "available": false,
+        "version": null,
+        "required": true,
+        "description": "Computer vision library"
+      },
+      "Pillow": {
+        "available": false,
+        "version": null,
+        "required": true,
+        "description": "Image processing"
+      },
+      "matplotlib": {
+        "available": true,
+        "version": "3.5.1",
+        "required": true,
+        "description": "Plotting and visualization"
+      },
+      "scipy": {
+        "available": true,
+        "version": "1.15.3",
+        "required": true,
+        "description": "Scientific computing"
+      },
+      "scikit-learn": {
+        "available": false,
+        "version": null,
+        "required": true,
+        "description": "Machine learning"
+      },
+      "librosa": {
+        "available": true,
+        "version": "0.11.0",
+        "required": true,
+        "description": "Audio analysis"
+      },
+      "sqlite3": {
+        "available": true,
+        "version": "Unknown",
+        "required": true,
+        "description": "SQLite database"
+      },
+      "asyncpg": {
+        "available": false,
+        "version": null,
+        "required": false,
+        "description": "PostgreSQL async driver"
+      },
+      "fastapi": {
+        "available": true,
+        "version": "0.115.13",
+        "required": true,
+        "description": "Web API framework"
+      },
+      "uvicorn": {
+        "available": true,
+        "version": "0.34.3",
+        "required": true,
+        "description": "ASGI server"
+      },
+      "requests": {
+        "available": true,
+        "version": "2.31.0",
+        "required": true,
+        "description": "HTTP client"
+      },
+      "aiohttp": {
+        "available": true,
+        "version": "3.12.12",
+        "required": true,
+        "description": "Async HTTP client"
+      },
+      "torch": {
+        "available": true,
+        "version": "2.7.1+cu126",
+        "required": false,
+        "description": "PyTorch deep learning"
+      },
+      "torchvision": {
+        "available": true,
+        "version": "0.22.1+cu126",
+        "required": false,
+        "description": "PyTorch computer vision"
+      },
+      "tensorflow": {
+        "available": false,
+        "version": null,
+        "required": false,
+        "description": "TensorFlow deep learning"
+      },
+      "transformers": {
+        "available": false,
+        "version": null,
+        "required": false,
+        "description": "Transformer models"
+      },
+      "anthropic": {
+        "available": true,
+        "version": "0.3.11",
+        "required": false,
+        "description": "Anthropic API client"
+      },
+      "python-magic": {
+        "available": false,
+        "version": null,
+        "required": true,
+        "description": "File type detection"
+      },
+      "cryptography": {
+        "available": true,
+        "version": "41.0.4",
+        "required": true,
+        "description": "Cryptographic utilities"
+      },
+      "tqdm": {
+        "available": true,
+        "version": "4.67.1",
+        "required": true,
+        "description": "Progress bars"
+      },
+      "click": {
+        "available": true,
+        "version": "8.1.7",
+        "required": true,
+        "description": "CLI framework"
+      },
+      "pydantic": {
+        "available": true,
+        "version": "2.11.5",
+        "required": true,
+        "description": "Data validation"
+      },
+      "jinja2": {
+        "available": true,
+        "version": "3.1.6",
+        "required": true,
+        "description": "Template engine"
+      },
+      "numba": {
+        "available": true,
+        "version": "0.61.2",
+        "required": false,
+        "description": "JIT compilation"
+      },
+      "cython": {
+        "available": false,
+        "version": null,
+        "required": false,
+        "description": "C extensions"
+      }
+    },
+    "gpu_support": {
+      "nvidia_smi": false,
+      "cuda_available": false,
+      "torch_cuda": false,
+      "tensorflow_gpu": false
+    },
+    "optional_tools": {
+      "yara": {
+        "available": true,
+        "version": "4.1.3",
+        "description": "Pattern matching engine"
+      },
+      "clamav": {
+        "available": false,
+        "version": null,
+        "description": "Antivirus scanner"
+      },
+      "volatility": {
+        "available": false,
+        "version": null,
+        "description": "Memory forensics"
+      },
+      "john": {
+        "available": true,
+        "version": "1.9.0",
+        "description": "Password cracking"
+      },
+      "hashcat": {
+        "available": true,
+        "version": "6.2.5",
+        "description": "Password recovery"
+      },
+      "sqlmap": {
+        "available": false,
+        "version": null,
+        "description": "SQL injection testing"
+      }
+    },
+    "configuration": {
+      "config_dir": false,
+      "models_dir": false,
+      "logs_dir": false,
+      "reports_dir": false,
+      "temp_dir": false,
+      "static_dir": false,
+      "templates_dir": false,
+      "wordlists_dir": false,
+      "main_config": false,
+      "database_exists": false
+    },
+    "performance": {
+      "total_memory_mb": 15900,
+      "free_disk_space_gb": 199,
+      "cpu_count": 8,
+      "python_version": "3.10.12"
+    },
+    "system_info": {
+      "platform": "Linux",
+      "architecture": "x86_64",
+      "python_version": "3.10.12",
+      "cpu_count": 8
+    }
+  },
+  "errors": [
+    "Missing required tool: outguess",
+    "Missing required Python package: opencv-python",
+    "Missing required Python package: Pillow",
+    "Missing required Python package: scikit-learn",
+    "Missing required Python package: python-magic"
+  ],
+  "warnings": [
+    "Missing configuration: config_dir",
+    "Missing configuration: main_config"
+  ],
+  "missing_tools": [
+    "outguess",
+    "python:opencv-python",
+    "python:Pillow",
+    "python:scikit-learn",
+    "python:python-magic"
+  ]
+}
