@@ -222,6 +222,31 @@ class DatabaseManager:
         
         return finding_id
     
+  
+    async def store_analysis_result(self, session_id: str, method: str, results: list):
+        """Store analysis results from tools"""
+        if not results:
+            return
+        
+        try:
+            for result in results:
+                if isinstance(result, dict):
+                    # Get file_id for this session
+                    if hasattr(self, 'current_file_id'):
+                        file_id = self.current_file_id
+                    else:
+                        # Fallback: get most recent file for this session
+                        cursor = self.sqlite_conn.cursor()
+                        cursor.execute("SELECT id FROM files WHERE session_id = ? ORDER BY created_at DESC LIMIT 1", (session_id,))
+                        row = cursor.fetchone()
+                        file_id = row[0] if row else "unknown"
+                    
+                    await self.store_finding(session_id, file_id, result)
+                else:
+                    self.logger.warning(f"Invalid result format: {type(result)}")
+        except Exception as e:
+            self.logger.error(f"Error storing analysis results for method {method}: {e}")
+    
     async def store_file_analysis(self, session_id: str, file_info: dict):
         """Store or update file analysis results - THIS IS THE MISSING METHOD"""
         file_path = file_info.get('file_path')

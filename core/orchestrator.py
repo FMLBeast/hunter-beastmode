@@ -268,9 +268,9 @@ class StegOrchestrator:
         tasks = []
         
         if self.file_tools:
-            if "file_signature" not in completed:
+            if "magic_analysis" not in completed:
                 tasks.append(AnalysisTask(
-                    file_path=file_path, method="file_signature", tool_name="file_forensics",
+                    file_path=file_path, method="magic_analysis", tool_name="file_forensics",
                     priority=2, dependencies=["basic_analysis"], estimated_time=2.0
                 ))
         
@@ -360,7 +360,7 @@ class StegOrchestrator:
             self.logger.error(f"Failed to execute {task.method}: {e}")
             return None
 
-async def _run_classic_tool(self, task: AnalysisTask) -> List[Dict[str, Any]]:
+    async def _run_classic_tool(self, task: AnalysisTask) -> List[Dict[str, Any]]:
         """Run classic steganography tool"""
         try:
             return self.classic_tools.execute_method(task.method, task.file_path)
@@ -421,7 +421,9 @@ async def _run_classic_tool(self, task: AnalysisTask) -> List[Dict[str, Any]]:
                 return await self.llm_analyzer.analyze(task.file_path)
         except Exception as e:
             self.logger.error(f"LLM tool error: {e}")
-        return []    async def _run_ml_tool(self, task: AnalysisTask) -> List[Dict[str, Any]]:
+        return []    
+    
+    async def _run_ml_tool(self, task: AnalysisTask) -> List[Dict[str, Any]]:
         """Run ML detection tool - FIXED to use execute_method_async"""
         if hasattr(self.ml_detector, 'execute_method_async'):
             return await self.ml_detector.execute_method_async('cnn_steg_detection', task.file_path)

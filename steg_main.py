@@ -13,7 +13,7 @@ import argparse
 import json
 from datetime import datetime
 
-from core.orchestrator import StegOrchestrator
+from core.cascading_analyzer import CascadingAnalyzer
 from config.steg_config import Config
 from core.database import DatabaseManager
 from core.dashboard import Dashboard
