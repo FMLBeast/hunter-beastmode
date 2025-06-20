@@ -145,7 +145,7 @@ class StegOrchestrator:
         
         try:
             # Basic file analysis first
-            file_info = await self.file_analyzer.analyze(file_path)
+            file_info = await self.file_analyzer.analyze_file(file_path)
             await self.db.store_file_analysis(session_id, file_info)
             
             # Create analysis plan based on file type
