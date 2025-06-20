@@ -1,0 +1,30 @@
+{
+  "database": {
+    "type": "sqlite",
+    "path": "steganalyzer.db",
+    "connection_pool_size": 100
+  },
+  "orchestrator": {
+    "max_concurrent_files": 20,
+    "max_cpu_workers": 61,
+    "max_gpu_workers": 8,
+    "task_timeout": 1800,
+    "memory_limit_gb": 80,
+    "temp_directory": "temp",
+    "batch_size": 50
+  },
+  "cascade": {
+    "max_depth": 30,
+    "max_files": 500000,
+    "enable_zsteg": true,
+    "enable_binwalk": true,
+    "comprehensive_mode": true,
+    "parallel_extractions": 20
+  },
+  "performance": {
+    "cpu_optimization": "aggressive",
+    "memory_optimization": "high",
+    "io_optimization": "async",
+    "cache_size_mb": 8192
+  }
+}
