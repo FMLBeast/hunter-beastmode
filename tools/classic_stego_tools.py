@@ -14,7 +14,14 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 import hashlib
-import magic
+try:
+    import magic
+except ImportError:
+    class magic:
+        @staticmethod
+        def from_file(path, mime=False):
+            return "application/octet-stream"
+
 from concurrent.futures import ThreadPoolExecutor
 import time
 

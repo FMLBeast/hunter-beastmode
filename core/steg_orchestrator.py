@@ -25,7 +25,7 @@ from cloud.cloud_integrations import CloudIntegrations
 from core.file_analyzer import FileAnalyzer
 from core.graph_tracker import GraphTracker
 from utils.gpu_manager import GPUManager
-from utils.checkpoint import CheckpointManager
+from utils.checkpoint_manager import CheckpointManager
 
 @dataclass
 class AnalysisTask:
