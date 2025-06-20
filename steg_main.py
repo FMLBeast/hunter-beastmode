@@ -18,6 +18,7 @@ from config.steg_config import Config
 from core.database import DatabaseManager
 from core.dashboard import Dashboard
 from core.reporter import ReportGenerator
+from core.orchestrator import StegOrchestrator
 import logging
 
 def setup_logging(level=logging.INFO):
