@@ -7,7 +7,7 @@ __author__ = "StegAnalyzer Team"
 
 # Core functionality should always be available
 try:
-    from .config import Config
+    from config import Config
 except ImportError:
     Config = None
 

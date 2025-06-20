@@ -20,6 +20,7 @@ import math
 from concurrent.futures import ThreadPoolExecutor
 import matplotlib.pyplot as plt
 import matplotlib
+import re
 matplotlib.use('Agg')  # Non-interactive backend
 
 # Advanced audio processing
@@ -51,7 +52,7 @@ except ImportError:
     SCIPY_FFT_AVAILABLE = False
 
 class AudioAnalysisTools:
-    def __init__(self, config):
+    def __init__(self, config, file_path):
         self.config = config.audio_analysis
         self.logger = logging.getLogger(__name__)
         self.temp_dir = Path(tempfile.mkdtemp(prefix="audio_steg_"))

@@ -2,23 +2,23 @@
 Core analysis components
 """
 # Use the actual renamed files
-from .file_analyzer import FileAnalyzer
-from .database import DatabaseManager  # This is database.py, not steg_database.py
-from .graph_tracker import GraphTracker
+from file_analyzer import FileAnalyzer
+from database import DatabaseManager  # This is database.py, not steg_database.py
+from graph_tracker import GraphTracker
 
 # Optional components with dependencies
 try:
-    from .orchestrator import StegOrchestrator
+    from orchestrator import StegOrchestrator
 except ImportError:
     StegOrchestrator = None
 
 try:
-    from .dashboard import Dashboard
+    from dashboard import Dashboard
 except ImportError:
     Dashboard = None
 
 try:
-    from .reporter import ReportGenerator
+    from reporter import ReportGenerator
 except ImportError:
     ReportGenerator = None
 

@@ -67,27 +67,27 @@ def organize_steganalyzer():
     print("4. Creating __init__.py files...")
     
     init_files = {
-        "ai/__init__.py": 'from .llm_analyzer import LLMAnalyzer\nfrom .ml_detector import MLStegDetector\n',
-        "cloud/__init__.py": 'from .integrations import CloudIntegrations\n',
-        "config/__init__.py": 'from .steg_config import Config\n',
-        "core/__init__.py": '''from .file_analyzer import FileAnalyzer
-from .orchestrator import StegOrchestrator
-from .database import DatabaseManager
-from .dashboard import Dashboard
-from .reporter import ReportGenerator
-from .graph_tracker import GraphTracker
+        "ai/__init__.py": 'from llm_analyzer import LLMAnalyzer\nfrom ml_detector import MLStegDetector\n',
+        "cloud/__init__.py": 'from integrations import CloudIntegrations\n',
+        "config/__init__.py": 'from steg_config import Config\n',
+        "core/__init__.py": '''from file_analyzer import FileAnalyzer
+from orchestrator import StegOrchestrator
+from database import DatabaseManager
+from dashboard import Dashboard
+from reporter import ReportGenerator
+from graph_tracker import GraphTracker
 ''',
-        "tools/__init__.py": '''from .classic_stego import ClassicStegoTools
-from .image_forensics import ImageForensicsTools
-from .audio_analysis import AudioAnalysisTools
-from .file_forensics import FileForensicsTools
-from .crypto_analysis import CryptoAnalysisTools
-from .metadata_carving import MetadataCarving
+        "tools/__init__.py": '''from classic_stego import ClassicStegoTools
+from image_forensics import ImageForensicsTools
+from audio_analysis import AudioAnalysisTools
+from file_forensics import FileForensicsTools
+from crypto_analysis import CryptoAnalysisTools
+from metadata_carving import MetadataCarving
 ''',
-        "utils/__init__.py": '''from .checkpoint import CheckpointManager
-from .gpu_manager import GPUManager
-from .system_check import SystemChecker
-from .logger import setup_logging
+        "utils/__init__.py": '''from checkpoint import CheckpointManager
+from gpu_manager import GPUManager
+from system_check import SystemChecker
+from logger import setup_logging
 '''
     }
     

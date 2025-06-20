@@ -1,16 +1,16 @@
 """
 Utility functions
 """
-from .checkpoint import CheckpointManager  # This is checkpoint.py, not checkpoint_manager.py
-from .system_check import SystemChecker
+from checkpoint import CheckpointManager  # This is checkpoint.py, not checkpoint_manager.py
+from system_check import SystemChecker
 
 try:
-    from .gpu_manager import GPUManager
+    from gpu_manager import GPUManager
 except ImportError:
     GPUManager = None
 
 try:
-    from .logger import setup_logging
+    from logger import setup_logging
 except ImportError:
     def setup_logging(level="INFO"):
         import logging

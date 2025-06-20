@@ -82,7 +82,7 @@ except ImportError as e:
 
 # GPU management (optional)
 try:
-    from utils.gpu_manager import GPUManager
+    from utils.gpu import GPUManager
 except ImportError as e:
     print(f"Warning: GPUManager not available: {e}")
     GPUManager = None
