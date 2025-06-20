@@ -14,25 +14,12 @@ import json
 from datetime import datetime
 
 from core.steg_orchestrator import StegOrchestrator
-from config.steg_config import Config
-from core.steg_database import DatabaseManager
+from core.config import Config
+from core.database import DatabaseManager
 from core.dashboard import Dashboard
 from core.reporter import ReportGenerator
-# from utils.logger import setup_logging  # (autofixed: file missing)
-# from utils.system_check import SystemChecker  # (autofixed: file missing)
-import logging
-
-def setup_logging():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s"
-    )
-    logging.getLogger("steg_main").info("Logging initialized.")
-    
-class SystemChecker:
-    @staticmethod
-    def check():
-        print("System check: [OK] (dummy checker, replace with real checks as needed)")
+from utils.logger import setup_logging
+from utils.system_check import SystemChecker
 
 class StegAnalyzer:
     def __init__(self, config_path: str = "config/default.json"):
