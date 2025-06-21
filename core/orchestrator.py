@@ -17,7 +17,7 @@ from .file_analyzer import FileAnalyzer
 from .database import DatabaseManager
 from utils.checkpoint import CheckpointManager
 
-# Optional tool imports
+# Optional tool imports (if available)
 try:
     from tools.file_forensics import FileForensicsTools
 except ImportError:
@@ -60,40 +60,28 @@ class StegOrchestrator:
         self.config = config
         self.db = database
         self.logger = logging.getLogger(__name__)
-        # Checkpoint manager
+        # optional checkpoint manager
         try:
             self.checkpoint = CheckpointManager(getattr(config, 'orchestrator', {}), database)
         except Exception:
             self.checkpoint = None
-        # Thread pool for blocking tasks
+        # thread pool
         max_workers = getattr(config.orchestrator, 'max_cpu_workers', 4)
         self.pool = ThreadPoolExecutor(max_workers=max_workers)
-        # Core file analyzer
+        # core file analyzer (async)
         fa_cfg = getattr(config, 'file_forensics', {})
         self.file_analyzer = FileAnalyzer(fa_cfg)
-        # Initialize optional tools
+        # initialize tools
         self.file_forensics_tool = None
         self.tools: List[Any] = []
-        def init_optional(cls, cfg_attr, name, main=False):
-            cfg = getattr(config, cfg_attr, None)
-            if cls and cfg is not None:
-                try:
-                    inst = cls(cfg)
-                    if main:
-                        self.file_forensics_tool = inst
-                        self.logger.info(f"Initialized {name}")
-                    else:
-                        self.tools.append(inst)
-                        self.logger.info(f"Initialized tool: {name}")
-                except Exception as e:
-                    self.logger.warning(f"Failed to init {name}: {e}")
-        init_optional(FileForensicsTools, 'file_forensics', 'FileForensicsTools', main=True)
-        init_optional(ClassicStegoTools, 'classic_stego', 'ClassicStegoTools')
-        init_optional(ImageForensicsTools, 'image_forensics', 'ImageForensicsTools')
-        init_optional(AudioAnalysisTools, 'audio_analysis', 'AudioAnalysisTools')
-        init_optional(CryptoAnalysisTools, 'crypto', 'CryptoAnalysisTools')
-        init_optional(MLStegDetector, 'ml', 'MLStegDetector')
-        init_optional(LLMAnalyzer, 'llm', 'LLMAnalyzer')
+        self._init_tool(FileForensicsTools, 'file_forensics', main=True)
+        self._init_tool(ClassicStegoTools, 'classic_stego')
+        self._init_tool(ImageForensicsTools, 'image_forensics')
+        self._init_tool(AudioAnalysisTools, 'audio_analysis')
+        self._init_tool(CryptoAnalysisTools, 'crypto')
+        self._init_tool(MLStegDetector, 'ml')
+        self._init_tool(LLMAnalyzer, 'llm')
+        # cascade analyzer from orchestrator config
         if CascadeAnalyzer:
             cascade_cfg = getattr(config, 'cascade', getattr(config, 'orchestrator', {}))
             try:
@@ -103,44 +91,54 @@ class StegOrchestrator:
             except Exception as e:
                 self.logger.warning(f"Failed to init CascadeAnalyzer: {e}")
         self.logger.info(
-            "StegOrchestrator ready. FileForensics: %s, Other tools: %s",
+            "StegOrchestrator ready: FileForensics=%s, OtherTools=%s",
             bool(self.file_forensics_tool), [type(t).__name__ for t in self.tools]
         )
 
+    def _init_tool(self, cls, cfg_attr: str, main: bool=False):
+        cfg = getattr(self.config, cfg_attr, None)
+        if cls and cfg is not None:
+            try:
+                inst = cls(cfg)
+                if main:
+                    self.file_forensics_tool = inst
+                    self.logger.info(f"Initialized FileForensicsTools")
+                else:
+                    self.tools.append(inst)
+                    self.logger.info(f"Initialized tool: {type(inst).__name__}")
+            except Exception as e:
+                self.logger.warning(f"Failed to init {type(inst).__name__ if 'inst' in locals() else cls.__name__}: {e}")
+
     def analyze(self, target: Union[str, Path], session_id: Any) -> List[Any]:
         """
-        Entry point for analysis.
-        :param target: file or directory to analyze
-        :param session_id: existing session identifier
-        :return: list of findings
+        Entry point for analysis. Synchronous wrapper.
         """
-        path = Path(target)
         try:
             loop = asyncio.get_event_loop()
-            return loop.run_until_complete(self._analyze_async(path, session_id))
+            return loop.run_until_complete(self._analyze_async(Path(target), session_id))
         except Exception as e:
-            self.logger.error(f"Orchestration failed: {e}\n{traceback.format_exc()}")
+            self.logger.error(f"Analysis orchestration error: {e}\n{traceback.format_exc()}")
             return []
 
-    async def _analyze_async(self, target: Path, session_id: Any) -> List[Any]:
-        files = [target] if target.is_file() else list(target.rglob('*'))
+    async def _analyze_async(self, path: Path, session_id: Any) -> List[Any]:
+        # gather files
+        files = [path] if path.is_file() else [p for p in path.rglob('*') if p.is_file()]
         findings: List[Any] = []
         for f in files:
-            if f.is_dir():
-                continue
+            # file analysis
             try:
                 info = await self.file_analyzer.analyze_file(f)
                 file_id = await self.db.add_file(session_id, str(f), info)
             except Exception as e:
-                self.logger.error(f"File analysis error for {f}: {e}")
+                self.logger.error(f"Failed file analysis {f}: {e}")
                 continue
-            tool_tasks = []
-            loop = asyncio.get_running_loop()
+            # prepare tool tasks
+            tasks = []
             if self.file_forensics_tool:
-                for m in self.file_forensics_tool.get_supported_methods():
-                    tool_tasks.append(
-                        loop.run_in_executor(self.pool,
-                            lambda method=m: _wrap_sync(method, self.file_forensics_tool, f, session_id)
+                for method in self.file_forensics_tool.get_supported_methods():
+                    tasks.append(
+                        asyncio.get_running_loop().run_in_executor(
+                            self.pool, _wrap_sync, method, self.file_forensics_tool, f, session_id
                         )
                     )
             for tool in self.tools:
@@ -148,39 +146,42 @@ class StegOrchestrator:
                 if not method:
                     continue
                 if asyncio.iscoroutinefunction(method):
-                    task = _wrap_async(method, tool, f, session_id)
+                    tasks.append(_wrap_async(method, tool, f, session_id))
                 else:
-                    task = loop.run_in_executor(self.pool, _wrap_sync, method, tool, f, session_id)
-                tool_tasks.append(task)
-            if tool_tasks:
-                raw = await asyncio.gather(*tool_tasks, return_exceptions=True)
-                for res in raw:
+                    tasks.append(
+                        asyncio.get_running_loop().run_in_executor(
+                            self.pool, _wrap_sync, method, tool, f, session_id
+                        )
+                    )
+            # run all
+            if tasks:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for res in results:
                     if isinstance(res, Exception):
                         self.logger.error(f"Tool task error: {res}")
                         continue
                     items = res if isinstance(res, list) else [res]
                     for item in items:
-                        if not item or not isinstance(item, dict):
+                        if not isinstance(item, dict):
                             continue
                         item.setdefault('file_id', file_id)
-                        item.setdefault('tool_name', type(item.get('tool')).__name__ if item.get('tool') else item.get('tool_name', None) or 'UnknownTool')
-                        await self._store_result(session_id, item)
+                        item.setdefault('tool_name', item.get('tool_name', type(tool).__name__ if 'tool' in locals() else 'Unknown'))
+                        await self._store_finding(session_id, item)
                         if item.get('type') != 'file':
                             findings.append(item)
-        self.logger.info("Analysis complete for session %s", session_id)
+        self.logger.info("Session %s analysis complete", session_id)
         return findings
 
-    async def _store_result(self, session_id: Any, result: dict) -> None:
+    async def _store_finding(self, session_id: Any, result: dict):
         if result.get('type') == 'file':
             return
-        fid = result.get('file_id')
-        if fid is None:
-            self.logger.warning("Skipping result without file_id: %s", result)
+        file_id = result.get('file_id')
+        if not file_id:
+            self.logger.warning(f"Skip result without file_id: {result}")
             return
-        # Ensure tool_name present
-        if 'tool_name' not in result or not result['tool_name']:
-            result['tool_name'] = 'UnknownTool'
-        await self.db.store_finding(session_id, fid, result)
+        tool_name = result.get('tool_name') or 'UnknownTool'
+        result['tool_name'] = tool_name
+        await self.db.store_finding(session_id, file_id, result)
 
 # Helpers
 
@@ -190,37 +191,20 @@ def _get_tool_method(tool: Any) -> Callable:
             return getattr(tool, name)
     return None
 
-async def _wrap_async(method: Callable, tool: Any, f: Path, session_id: Any) -> Any:
+async def _wrap_async(method: Callable, tool: Any, f: Path, session_id: Any):
     try:
-        res = await method(f, session_id)
+        return await method(f, session_id)
     except TypeError:
-        res = await method(f)
+        return await method(f)
     except Exception as e:
-        logging.getLogger(__name__).error(f"Async tool error: {e}")
+        logging.getLogger(__name__).error(f"Async error {tool}: {e}")
         return []
-    # annotate result(s)
-    if isinstance(res, list):
-        for item in res:
-            if isinstance(item, dict):
-                item['tool_name'] = type(tool).__name__
-        return res
-    if isinstance(res, dict):
-        res['tool_name'] = type(tool).__name__
-    return res
 
-def _wrap_sync(method: Callable, tool: Any, f: Path, session_id: Any) -> Any:
+def _wrap_sync(method: Callable, tool: Any, f: Path, session_id: Any):
     try:
-        res = method(f, session_id)
+        return method(f, session_id)
     except TypeError:
-        res = method(f)
+        return method(f)
     except Exception as e:
-        logging.getLogger(__name__).error(f"Sync tool error: {e}")
+        logging.getLogger(__name__).error(f"Sync error {tool}: {e}")
         return []
-    if isinstance(res, list):
-        for item in res:
-            if isinstance(item, dict):
-                item['tool_name'] = type(tool).__name__
-        return res
-    if isinstance(res, dict):
-        res['tool_name'] = type(tool).__name__
-    return res
