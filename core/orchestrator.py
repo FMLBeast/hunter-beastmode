@@ -2,6 +2,7 @@
 """
 Robust Orchestrator for StegAnalyzer
 Handles async/await correctly, integrates checkpointing, and tolerates extra init args.
+Provides unified `analyze` entrypoint.
 """
 
 import asyncio
@@ -75,6 +76,7 @@ class StegOrchestrator:
     """
     Orchestrates analysis tools over files/directories.
     Accepts a Config and a DatabaseManager instance (extra args ignored).
+    Provides an `analyze` method to process a directory or single file.
     """
 
     def __init__(self, config, database: DatabaseManager, *args, **kwargs):
@@ -90,7 +92,6 @@ class StegOrchestrator:
         self.thread_pool = ThreadPoolExecutor(max_workers=config.orchestrator.max_cpu_workers)
 
         # Analyzer and tools
-        # Pass file_forensics config into FileAnalyzer to satisfy its signature
         self.file_analyzer = FileAnalyzer(self.config.file_forensics)
         self._initialize_tools()
         self.logger.info("StegOrchestrator initialized")
@@ -153,26 +154,94 @@ class StegOrchestrator:
             self.cascade_analyzer = None
             self.logger.warning(f"Cascade analyzer init failed: {e}")
 
-    # rest of file unchanged...
-    async def analyze_file(self, file_path: Path, method: str, tool_name: str, priority: int = 1,
-                           dependencies: Optional[List[str]] = None, gpu_required: bool = False,
-                           estimated_time: float = 1.0) -> Dict[str, Any]:
-        """
-        Analyze a single file with the specified method and tool.
-        """
-        task = AnalysisTask(file_path=file_path, method=method, tool_name=tool_name, priority=priority,
-                            dependencies=dependencies or [], gpu_required=gpu_required,
-                            estimated_time=estimated_time)
+    async def _run_task(self, task: AnalysisTask):
+        """Executes a single AnalysisTask, logs results."""
+        # Dispatch based on method/tool
+        try:
+            method = getattr(self, f"_{task.method}")
+            result = await method(task)
+            self.db.save_finding(task.file_path, task.tool_name, result)
+        except Exception as e:
+            self.logger.error(f"Task {task.tool_name}.{task.method} failed: {e}")
 
-        # Checkpointing logic
-        if self.checkpoint_manager.is_checkpointed(task):
-            self.logger.info(f"Skipping already completed task for {file_path}")
-            return self.checkpoint_manager.get_checkpoint(task)
+    async def analyze(self, target: Path):
+        """Entry point: analyze a file or directory."""
+        paths = [target] if target.is_file() else list(target.rglob('*'))
+        tasks: List[AnalysisTask] = []
+        for p in paths:
+            if p.is_file():
+                tasks.extend(self._schedule_file_tasks(p))
 
-        # Run analysis in thread pool
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(self.thread_pool, self._run_analysis_task, task)
+        # Run all tasks with concurrency control
+        await asyncio.gather(*(self._run_task(t) for t in tasks))
 
-        # Save checkpoint
-        self.checkpoint_manager.save_checkpoint(task, result)
-        return result
+    def _schedule_file_tasks(self, file_path: Path) -> List[AnalysisTask]:
+        """Generate AnalysisTask instances for each enabled tool on a file."""
+        tasks = []
+        # File forensics
+        if self.file_tools:
+            tasks.append(AnalysisTask(file_path, 'file_forensics', 'file_tools'))
+        # Classic stego
+        if self.classic_tools:
+            tasks.append(AnalysisTask(file_path, 'classic_stego', 'classic_tools'))
+        # Image forensic
+        if self.image_tools:
+            tasks.append(AnalysisTask(file_path, 'image_forensics', 'image_tools'))
+        # Audio analysis
+        if self.audio_tools:
+            tasks.append(AnalysisTask(file_path, 'audio_analysis', 'audio_tools'))
+        # Crypto analysis
+        if self.crypto_tools:
+            tasks.append(AnalysisTask(file_path, 'crypto_analysis', 'crypto_tools'))
+        # ML detection
+        if self.ml_detector:
+            tasks.append(AnalysisTask(file_path, 'ml_detection', 'ml_detector', gpu_required=True))
+        # LLM analysis
+        if self.llm_analyzer:
+            tasks.append(AnalysisTask(file_path, 'llm_analysis', 'llm_analyzer'))
+        # Cascade
+        if self.cascade_analyzer:
+            tasks.append(AnalysisTask(file_path, 'cascade_analysis', 'cascade_analyzer'))
+        return tasks
+
+    # Task implementations
+    async def _file_forensics(self, task: AnalysisTask) -> Any:
+        return await asyncio.get_event_loop().run_in_executor(
+            self.thread_pool,
+            self.file_tools.run, str(task.file_path)
+        )
+
+    async def _classic_stego(self, task: AnalysisTask) -> Any:
+        return await asyncio.get_event_loop().run_in_executor(
+            self.thread_pool,
+            self.classic_tools.run, str(task.file_path)
+        )
+
+    async def _image_forensics(self, task: AnalysisTask) -> Any:
+        return await asyncio.get_event_loop().run_in_executor(
+            self.thread_pool,
+            self.image_tools.run, str(task.file_path)
+        )
+
+    async def _audio_analysis(self, task: AnalysisTask) -> Any:
+        return await asyncio.get_event_loop().run_in_executor(
+            self.thread_pool,
+            self.audio_tools.run, str(task.file_path)
+        )
+
+    async def _crypto_analysis(self, task: AnalysisTask) -> Any:
+        return await asyncio.get_event_loop().run_in_executor(
+            self.thread_pool,
+            self.crypto_tools.run, str(task.file_path)
+        )
+
+    async def _ml_detection(self, task: AnalysisTask) -> Any:
+        return await self.ml_detector.detect(str(task.file_path))
+
+    async def _llm_analysis(self, task: AnalysisTask) -> Any:
+        return await self.llm_analyzer.analyze(str(task.file_path))
+
+    async def _cascade_analysis(self, task: AnalysisTask) -> Any:
+        return await self.cascade_analyzer.analyze(str(task.file_path))
+
+# End of orchestrator.py
