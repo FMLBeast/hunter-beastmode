@@ -86,48 +86,34 @@ class StegOrchestrator:
         self.logger = logging.getLogger(__name__)
 
         # Initialize checkpoint manager
-        self.checkpoint_manager = CheckpointManager(config.orchestrator)
+        self.checkpoint_manager = CheckpointManager(getattr(config, 'orchestrator', {}))
 
         # Thread pool for blocking tasks
-        self.thread_pool = ThreadPoolExecutor(max_workers=config.orchestrator.max_cpu_workers)
+        self.thread_pool = ThreadPoolExecutor(max_workers=getattr(config.orchestrator, 'max_cpu_workers', 4))
 
         # Analyzer and tools
-        self.file_analyzer = FileAnalyzer(self.config.file_forensics)
+        self.file_analyzer = FileAnalyzer(getattr(self.config, 'file_forensics', {}))
         self._initialize_tools()
         self.logger.info("StegOrchestrator initialized")
 
     def _initialize_tools(self):
-        # Initialize each optional tool safely
-        try:
-            self.file_tools = FileForensicsTools(self.config.file_forensics) if FileForensicsTools else None
-            self.logger.info("File forensics tools initialized")
-        except Exception as e:
-            self.file_tools = None
-            self.logger.error(f"File forensics init failed: {e}")
-        try:
-            self.classic_tools = ClassicStegoTools(self.config.classic_stego) if ClassicStegoTools else None
-            self.logger.info("Classic stego tools initialized")
-        except Exception as e:
-            self.classic_tools = None
-            self.logger.warning(f"Classic stego init failed: {e}")
-        try:
-            self.image_tools = ImageForensicsTools(self.config.image_forensics) if ImageForensicsTools else None
-            self.logger.info("Image forensics tools initialized")
-        except Exception as e:
-            self.image_tools = None
-            self.logger.warning(f"Image forensics init failed: {e}")
-        try:
-            self.audio_tools = AudioAnalysisTools(self.config.audio_analysis) if AudioAnalysisTools else None
-            self.logger.info("Audio analysis tools initialized")
-        except Exception as e:
-            self.audio_tools = None
-            self.logger.warning(f"Audio analysis init failed: {e}")
-        try:
-            self.crypto_tools = CryptoAnalysisTools(self.config.crypto) if CryptoAnalysisTools else None
-            self.logger.info("Crypto analysis tools initialized")
-        except Exception as e:
-            self.crypto_tools = None
-            self.logger.warning(f"Crypto analysis init failed: {e}")
+        def init_tool(ToolClass, cfg_attr, name, log_success=True):
+            try:
+                cfg = getattr(self.config, cfg_attr, {})
+                tool = ToolClass(cfg) if ToolClass else None
+                if tool and log_success:
+                    self.logger.info(f"{name} initialized")
+                return tool
+            except Exception as e:
+                self.logger.warning(f"{name} init failed: {e}")
+                return None
+
+        self.file_tools = init_tool(FileForensicsTools, 'file_forensics', 'File forensics tools')
+        self.classic_tools = init_tool(ClassicStegoTools, 'classic_stego', 'Classic stego tools')
+        self.image_tools = init_tool(ImageForensicsTools, 'image_forensics', 'Image forensics tools')
+        self.audio_tools = init_tool(AudioAnalysisTools, 'audio_analysis', 'Audio analysis tools')
+        self.crypto_tools = init_tool(CryptoAnalysisTools, 'crypto', 'Crypto analysis tools')
+
         try:
             if MLStegDetector and getattr(self.config.ml, 'enabled', False):
                 self.ml_detector = MLStegDetector(self.config.ml)
@@ -137,6 +123,7 @@ class StegOrchestrator:
         except Exception as e:
             self.ml_detector = None
             self.logger.error(f"ML detector init failed: {e}")
+
         try:
             if LLMAnalyzer and getattr(self.config.llm, 'enabled', False):
                 self.llm_analyzer = LLMAnalyzer(self.config.llm)
@@ -146,19 +133,39 @@ class StegOrchestrator:
         except Exception as e:
             self.llm_analyzer = None
             self.logger.warning(f"LLM analyzer init failed: {e}")
-        try:
-            self.cascade_analyzer = CascadeAnalyzer(self.config) if CascadeAnalyzer else None
-            self.logger.info("Cascade analyzer initialized")
-        except Exception as e:
-            self.cascade_analyzer = None
-            self.logger.warning(f"Cascade analyzer init failed: {e}")
+
+        self.cascade_analyzer = init_tool(CascadeAnalyzer, 'orchestrator', 'Cascade analyzer', log_success=False)
+
+    def _get_sync_method(self, tool, names=('run','analyze','execute')):
+        for nm in names:
+            if hasattr(tool, nm):
+                return getattr(tool, nm)
+        raise AttributeError(f"No sync entrypoint found on {tool}")
+
+    async def _invoke_sync(self, tool, file_path: Path):
+        method = self._get_sync_method(tool)
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(self.thread_pool, method, str(file_path))
+
+    async def _invoke_async(self, tool, file_path: Path):
+        # detect coroutine or async method
+        for nm in ('analyze','detect','execute'):
+            if hasattr(tool, nm):
+                fn = getattr(tool, nm)
+                if asyncio.iscoroutinefunction(fn):
+                    return await fn(str(file_path))
+                else:
+                    # wrap sync as thread
+                    return await self._invoke_sync(tool, file_path)
+        raise AttributeError(f"No async entrypoint found on {tool}")
 
     async def _run_task(self, task: AnalysisTask, session_id: Any = None):
-        """Executes a single AnalysisTask, logs and stores results."""
         try:
-            method = getattr(self, f"_{task.method}")
-            result = await method(task)
-            # Save finding; handle optional session_id signature
+            tool = getattr(self, task.tool_name)
+            if task.tool_name in ('ml_detector','llm_analyzer','cascade_analyzer'):
+                result = await self._invoke_async(tool, task.file_path)
+            else:
+                result = await self._invoke_sync(tool, task.file_path)
             try:
                 self.db.save_finding(task.file_path, task.tool_name, result)
             except TypeError:
@@ -167,65 +174,19 @@ class StegOrchestrator:
             self.logger.error(f"Task {task.tool_name}.{task.method} failed: {e}")
 
     async def analyze(self, target: Path, *args):
-        """Entry point: analyze a file or directory. Accepts optional session_id."""
         session_id = args[0] if args else None
         targets = [target] if target.is_file() else list(target.rglob('*'))
-        tasks: List[AnalysisTask] = []
-        for p in targets:
-            if p.is_file():
-                tasks.extend(self._schedule_file_tasks(p))
+        tasks = [t for p in targets if p.is_file() for t in self._schedule_file_tasks(p)]
         await asyncio.gather(*(self._run_task(t, session_id) for t in tasks))
 
     def _schedule_file_tasks(self, file_path: Path) -> List[AnalysisTask]:
-        tasks: List[AnalysisTask] = []
-        if self.file_tools:
-            tasks.append(AnalysisTask(file_path, 'file_forensics', 'file_tools'))
-        if self.classic_tools:
-            tasks.append(AnalysisTask(file_path, 'classic_stego', 'classic_tools'))
-        if self.image_tools:
-            tasks.append(AnalysisTask(file_path, 'image_forensics', 'image_tools'))
-        if self.audio_tools:
-            tasks.append(AnalysisTask(file_path, 'audio_analysis', 'audio_tools'))
-        if self.crypto_tools:
-            tasks.append(AnalysisTask(file_path, 'crypto_analysis', 'crypto_tools'))
-        if self.ml_detector:
-            tasks.append(AnalysisTask(file_path, 'ml_detection', 'ml_detector', gpu_required=True))
-        if self.llm_analyzer:
-            tasks.append(AnalysisTask(file_path, 'llm_analysis', 'llm_analyzer'))
-        if self.cascade_analyzer:
-            tasks.append(AnalysisTask(file_path, 'cascade_analysis', 'cascade_analyzer'))
+        tasks=[]
+        if self.file_tools:    tasks.append(AnalysisTask(file_path,'file_forensics','file_tools'))
+        if self.classic_tools: tasks.append(AnalysisTask(file_path,'classic_stego','classic_tools'))
+        if self.image_tools:   tasks.append(AnalysisTask(file_path,'image_forensics','image_tools'))
+        if self.audio_tools:   tasks.append(AnalysisTask(file_path,'audio_analysis','audio_tools'))
+        if self.crypto_tools:  tasks.append(AnalysisTask(file_path,'crypto_analysis','crypto_tools'))
+        if self.ml_detector:   tasks.append(AnalysisTask(file_path,'ml_detection','ml_detector',gpu_required=True))
+        if self.llm_analyzer:  tasks.append(AnalysisTask(file_path,'llm_analysis','llm_analyzer'))
+        if self.cascade_analyzer: tasks.append(AnalysisTask(file_path,'cascade_analysis','cascade_analyzer'))
         return tasks
-
-    async def _file_forensics(self, task: AnalysisTask) -> Any:
-        return await asyncio.get_event_loop().run_in_executor(
-            self.thread_pool, self.file_tools.run, str(task.file_path)
-        )
-
-    async def _classic_stego(self, task: AnalysisTask) -> Any:
-        return await asyncio.get_event_loop().run_in_executor(
-            self.thread_pool, self.classic_tools.run, str(task.file_path)
-        )
-
-    async def _image_forensics(self, task: AnalysisTask) -> Any:
-        return await asyncio.get_event_loop().run_in_executor(
-            self.thread_pool, self.image_tools.run, str(task.file_path)
-        )
-
-    async def _audio_analysis(self, task: AnalysisTask) -> Any:
-        return await asyncio.get_event_loop().run_in_executor(
-            self.thread_pool, self.audio_tools.run, str(task.file_path)
-        )
-
-    async def _crypto_analysis(self, task: AnalysisTask) -> Any:
-        return await asyncio.get_event_loop().run_in_executor(
-            self.thread_pool, self.crypto_tools.run, str(task.file_path)
-        )
-
-    async def _ml_detection(self, task: AnalysisTask) -> Any:
-        return await self.ml_detector.detect(str(task.file_path))
-
-    async def _llm_analysis(self, task: AnalysisTask) -> Any:
-        return await self.llm_analyzer.analyze(str(task.file_path))
-
-    async def _cascade_analysis(self, task: AnalysisTask) -> Any:
-        return await self.cascade_analyzer.analyze(str(task.file_path))
