@@ -47,7 +47,9 @@ class AnalysisTask:
     args: List[Any]
 
 class StegOrchestrator:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, *args):  # accept optional extra args
+        self.config = config
+
         self.config = config
         self.db = DatabaseManager(config.database)
         self.logger = logging.getLogger(__name__)
