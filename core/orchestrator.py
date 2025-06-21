@@ -5,6 +5,8 @@ Handles file analysis and optional tools invocation.
 """
 
 import asyncio
+import nest_asyncio
+nest_asyncio.apply()
 import logging
 import traceback
 from pathlib import Path
