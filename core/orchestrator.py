@@ -95,7 +95,7 @@ class StegOrchestrator:
                     self.tools.append(tool)
                     self.logger.info(f"Initialized tool: {type(tool).__name__}")
                 except Exception as e:
-                    self.logger.warning(f"Failed to init {type(ToolClass).__name__}: {e}")
+                    self.logger.warning(f"Failed to init {ToolClass.__name__}: {e}")
 
         self.logger.info("StegOrchestrator initialized with tools: %s", 
                          [type(t).__name__ for t in self.tools])
@@ -106,46 +106,42 @@ class StegOrchestrator:
         session_id is optional and passed to save contexts.
         """
         # Collect files to analyze
-        if target.is_file():
-            files = [target]
-        else:
-            files = [p for p in target.rglob('*') if p.is_file()]
+        files = [target] if target.is_file() else [p for p in target.rglob('*') if p.is_file()]
 
         loop = asyncio.get_running_loop()
         tasks = []
 
         for f in files:
-            # Core file forensic analysis
-            tasks.append(loop.run_in_executor(
-                self.thread_pool, self.file_analyzer.analyze, str(f), session_id
-            ))
+            str_path = str(f)
+            # Core file forensic analysis via async method
+            tasks.append(self.file_analyzer.analyze_file(str_path, session_id))
+
             # Optional tools
             for tool in self.tools:
                 # Determine entrypoint method
-                method = getattr(tool, 'analyze', None) or getattr(tool, 'run', None)
+                method = getattr(tool, 'analyze', None) or getattr(tool, 'run', None) or getattr(tool, 'execute', None)
                 if not method:
                     self.logger.warning("No entrypoint on %s", type(tool).__name__)
                     continue
                 # Schedule sync or async
                 if asyncio.iscoroutinefunction(method):
-                    tasks.append(method(str(f), session_id))
+                    tasks.append(method(str_path, session_id))
                 else:
                     tasks.append(loop.run_in_executor(
-                        self.thread_pool, method, str(f), session_id
+                        self.thread_pool, method, str_path, session_id
                     ))
 
-        # Execute all tasks
+        # Execute all tasks concurrently
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Log and save results
+        # Handle results
         for res in results:
             if isinstance(res, Exception):
                 self.logger.error("Analysis task error: %s", res)
-            else:
-                # res expected to be finding or list of findings
+            elif isinstance(res, tuple) and len(res) == 2:
                 try:
-                    self.db.save_finding(*res) if isinstance(res, tuple) else None
-                except Exception:
-                    pass
+                    self.db.save_finding(*res)
+                except Exception as e:
+                    self.logger.warning(f"Failed to save finding: {e}")
 
         self.logger.info("All analysis tasks completed")
