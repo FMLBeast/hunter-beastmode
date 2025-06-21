@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 # Core modules
 from .file_analyzer import FileAnalyzer
 from .database import DatabaseManager
-from .config import Config
+from config.steg_config import Config
 from utils.checkpoint import CheckpointManager
 
 # Dynamic tool imports
