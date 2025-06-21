@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
 Robust Orchestrator for StegAnalyzer
-Handles async/await correctly, integrates checkpointing, tolerates extra init args, and provides unified `analyze` entrypoint.
+Handles sync/async tools, unified analyze entrypoint, and result storage.
 """
 
 import asyncio
-from typing import Any
 import logging
+import traceback
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, List, Callable, Optional
 
-# Core imports
 from .file_analyzer import FileAnalyzer
 from .database import DatabaseManager
 from utils.checkpoint import CheckpointManager
@@ -56,92 +56,171 @@ try:
 except ImportError:
     CascadeAnalyzer = None
 
+
+def _get_tool_method(tool: Any) -> Optional[Callable]:
+    """
+    Find a supported entrypoint on a tool instance.
+    """
+    for name in ('analyze', 'run', 'execute', 'execute_method', 'cascade_analyze'):
+        fn = getattr(tool, name, None)
+        if callable(fn):
+            return fn
+    return None
+
+
+def _invoke_tool(method: Callable, file_path: Path, session_id: Any) -> Any:
+    """
+    Invoke a synchronous tool method, passing session if supported.
+    """
+    try:
+        return method(file_path, session_id)
+    except TypeError:
+        return method(file_path)
+
+
 class StegOrchestrator:
     """
-    Orchestrates analysis tools over files or directories.
-    Provides a single `analyze` method that schedules both core and optional tools.
+    Orchestrates analysis across files, using configured tools and database.
+    Provides a single `analyze(target)` method.
     """
 
-    def __init__(self, config: Any, database: DatabaseManager, *args, **kwargs):
+    def __init__(self, config: Any, database: DatabaseManager):
         self.config = config
         self.db = database
         self.logger = logging.getLogger(__name__)
 
-        # Setup checkpoint manager
-        self.checkpoint_manager = CheckpointManager(getattr(config, 'orchestrator', {}))
+        # Optional checkpoint manager
+        try:
+            self.checkpoint = CheckpointManager(getattr(config, 'orchestrator', {}), database)
+        except Exception:
+            self.checkpoint = None
 
-        # Thread pool for blocking tasks
+        # Thread pool for blocking/sync tools
         max_workers = getattr(config.orchestrator, 'max_cpu_workers', 4)
-        self.thread_pool = ThreadPoolExecutor(max_workers=max_workers)
+        self.pool = ThreadPoolExecutor(max_workers=max_workers)
 
         # Core file analyzer
-        self.file_analyzer = FileAnalyzer(getattr(config, 'file_forensics', {}))
+        fa_cfg = getattr(config, 'file_forensics', getattr(config, 'file_analyzer', {}))
+        self.file_analyzer = FileAnalyzer(fa_cfg)
 
         # Initialize optional tools
-        self.tools = []
-        for ToolClass, cfg_attr in [
-            (FileForensicsTools,   'file_forensics'),
-            (ClassicStegoTools,     'classic_stego'),
-            (ImageForensicsTools,   'image_forensics'),
-            (AudioAnalysisTools,    'audio_analysis'),
-            (CryptoAnalysisTools,   'crypto'),
-            (MLStegDetector,        'ml'),
-            (LLMAnalyzer,           'llm'),
-            (CascadeAnalyzer,       'orchestrator'),
-        ]:
-            if ToolClass and getattr(config, cfg_attr, True):
+        self.tools: List[Any] = []
+        def _init_tool(cls, cfg_attr: str, name: str):
+            cfg = getattr(config, cfg_attr, None)
+            if cls and cfg is not None:
                 try:
-                    tool = ToolClass(getattr(config, cfg_attr, {}))
-                    self.tools.append(tool)
-                    self.logger.info(f"Initialized tool: {type(tool).__name__}")
+                    inst = cls(cfg)
+                    self.tools.append(inst)
+                    self.logger.info(f"Initialized tool: {name}")
                 except Exception as e:
-                    self.logger.warning(f"Failed to init {ToolClass.__name__}: {e}")
+                    self.logger.warning(f"Failed to init {name}: {e}")
 
-        self.logger.info("StegOrchestrator initialized with tools: %s", 
+        _init_tool(FileForensicsTools, 'file_forensics', 'FileForensicsTools')
+        _init_tool(ClassicStegoTools, 'classic_stego', 'ClassicStegoTools')
+        _init_tool(ImageForensicsTools, 'image_forensics', 'ImageForensicsTools')
+        _init_tool(AudioAnalysisTools, 'audio_analysis', 'AudioAnalysisTools')
+        _init_tool(CryptoAnalysisTools, 'crypto_analysis', 'CryptoAnalysisTools')
+        _init_tool(MLStegDetector, 'ml', 'MLStegDetector')
+        _init_tool(LLMAnalyzer, 'llm', 'LLMAnalyzer')
+        if CascadeAnalyzer:
+            cascade_cfg = getattr(config, 'cascade', None)
+            if cascade_cfg is None:
+                cascade_cfg = getattr(config, 'orchestrator', {})
+            try:
+                inst = CascadeAnalyzer(cascade_cfg)
+                self.tools.append(inst)
+                self.logger.info("Initialized tool: CascadeAnalyzer")
+            except Exception as e:
+                self.logger.warning(f"Failed to init CascadeAnalyzer: {e}")
+
+        self.logger.info("StegOrchestrator ready with tools: %s", 
                          [type(t).__name__ for t in self.tools])
 
-    async def analyze(self, target: Path, session_id: Any = None):
+    def analyze(self, target: str) -> None:
         """
-        Analyze a file or all files in a directory.
-        session_id is optional and passed to save contexts.
+        Sync entrypoint: setup session and invoke async pipeline.
         """
-        # Collect files to analyze
-        files = [target] if target.is_file() else [p for p in target.rglob('*') if p.is_file()]
+        path = Path(target)
+        try:
+            session_id = asyncio.run(self.db.create_session(str(path)))
+        except Exception:
+            session_id = None
+
+        try:
+            asyncio.run(self._analyze_async(path, session_id))
+        except Exception as e:
+            self.logger.error(f"Orchestration failed: {e}\n{traceback.format_exc()}")
+
+    async def _analyze_async(self, target: Path, session_id: Any) -> None:
+        # Collect all files under target
+        if target.is_file():
+            files = [target]
+        else:
+            files = [p for p in target.rglob('*') if p.is_file()]
 
         loop = asyncio.get_running_loop()
-        tasks = []
+        tasks: List[Any] = []
 
         for f in files:
-            str_path = str(f)
-            # Core file forensic analysis via async method
-            tasks.append(self.file_analyzer.analyze_file(str_path, session_id))
+            # Core analysis
+            tasks.append(self._run_file_analysis(f, session_id))
 
             # Optional tools
             for tool in self.tools:
-                # Determine entrypoint method
-                method = getattr(tool, 'analyze', None) or getattr(tool, 'run', None) or getattr(tool, 'execute', None)
+                method = _get_tool_method(tool)
                 if not method:
-                    self.logger.warning("No entrypoint on %s", type(tool).__name__)
+                    self.logger.debug("No entrypoint for tool %s", type(tool).__name__)
                     continue
-                # Schedule sync or async
+
                 if asyncio.iscoroutinefunction(method):
-                    tasks.append(method(str_path, session_id))
+                    tasks.append(self._invoke_async_tool(method, f, session_id))
                 else:
                     tasks.append(loop.run_in_executor(
-                        self.thread_pool, method, str_path, session_id
+                        self.pool,
+                        _invoke_tool,
+                        method,
+                        f,
+                        session_id
                     ))
 
-        # Execute all tasks concurrently
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Handle results
+        # Store all findings
         for res in results:
             if isinstance(res, Exception):
-                self.logger.error("Analysis task error: %s", res)
-            elif isinstance(res, tuple) and len(res) == 2:
-                try:
-                    self.db.save_finding(*res)
-                except Exception as e:
-                    self.logger.warning(f"Failed to save finding: {e}")
+                self.logger.error(f"Task error: {res}")
+            else:
+                await self._store_result(session_id, res)
 
-        self.logger.info("All analysis tasks completed")
+        self.logger.info("Analysis complete for session %s", session_id)
+
+    async def _run_file_analysis(self, file_path: Path, session_id: Any) -> Any:
+        try:
+            info = await self.file_analyzer.analyze_file(file_path)
+            file_id = await self.db.add_file(session_id, str(file_path), info)
+            return {'file_id': file_id, 'type': 'file', 'data': info}
+        except Exception as e:
+            self.logger.error(f"File analysis error for %s: %s", file_path, e)
+            return None
+
+    async def _invoke_async_tool(self, method: Callable, f: Path, session_id: Any) -> Any:
+        try:
+            return await method(f, session_id)
+        except TypeError:
+            return await method(f)
+        except Exception as e:
+            self.logger.error(f"Async tool error: {e}")
+            return None
+
+    async def _store_result(self, session_id: Any, result: Any) -> None:
+        if not result or not isinstance(result, dict):
+            return
+        # Skip file-type entries
+        if result.get('type') == 'file':
+            return
+        # Batch of findings
+        if isinstance(result, list):
+            for finding in result:
+                await self.db.store_finding(session_id, finding.get('file_id'), finding)
+        else:
+            await self.db.store_finding(session_id, result.get('file_id'), result)
