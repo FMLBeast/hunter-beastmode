@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """
 Robust Orchestrator for StegAnalyzer
-Handles async/await correctly, integrates checkpointing, tolerates extra init args, and accepts optional session_id.
-Provides unified `analyze` entrypoint.
+Handles async/await correctly, integrates checkpointing, tolerates extra init args, and provides unified `analyze` entrypoint.
 """
 
 import asyncio
 import logging
 from pathlib import Path
-from typing import List, Any
-from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 
 # Core imports
@@ -58,25 +55,10 @@ try:
 except ImportError:
     CascadeAnalyzer = None
 
-@dataclass
-class AnalysisTask:
-    file_path: Path
-    method: str
-    tool_name: str
-    priority: int = 1
-    dependencies: List[str] = None
-    gpu_required: bool = False
-    estimated_time: float = 1.0
-
-    def __post_init__(self):
-        if self.dependencies is None:
-            self.dependencies = []
-
 class StegOrchestrator:
     """
-    Orchestrates analysis tools over files/directories.
-    Accepts a Config and a DatabaseManager instance (extra args ignored).
-    Provides an `analyze` method to process a directory or single file.
+    Orchestrates analysis tools over files or directories.
+    Provides a single `analyze` method that schedules both core and optional tools.
     """
 
     def __init__(self, config: Any, database: DatabaseManager, *args, **kwargs):
@@ -84,110 +66,85 @@ class StegOrchestrator:
         self.db = database
         self.logger = logging.getLogger(__name__)
 
-        # Initialize checkpoint manager
+        # Setup checkpoint manager
         self.checkpoint_manager = CheckpointManager(getattr(config, 'orchestrator', {}))
 
         # Thread pool for blocking tasks
         max_workers = getattr(config.orchestrator, 'max_cpu_workers', 4)
         self.thread_pool = ThreadPoolExecutor(max_workers=max_workers)
 
-        # Analyzer and tools
-        self.file_analyzer = FileAnalyzer(getattr(self.config, 'file_forensics', {}))
-        self._initialize_tools()
-        self.logger.info("StegOrchestrator initialized")
+        # Core file analyzer
+        self.file_analyzer = FileAnalyzer(getattr(config, 'file_forensics', {}))
 
-    def _initialize_tools(self):
-        def init_tool(ToolClass, cfg_attr, name):
-            try:
-                cfg = getattr(self.config, cfg_attr, {})
-                tool = ToolClass(cfg) if ToolClass else None
-                if tool:
-                    self.logger.info(f"{name} initialized")
-                return tool
-            except Exception as e:
-                self.logger.warning(f"{name} init failed: {e}")
-                return None
+        # Initialize optional tools
+        self.tools = []
+        for ToolClass, cfg_attr in [
+            (FileForensicsTools,   'file_forensics'),
+            (ClassicStegoTools,     'classic_stego'),
+            (ImageForensicsTools,   'image_forensics'),
+            (AudioAnalysisTools,    'audio_analysis'),
+            (CryptoAnalysisTools,   'crypto'),
+            (MLStegDetector,        'ml'),
+            (LLMAnalyzer,           'llm'),
+            (CascadeAnalyzer,       'orchestrator'),
+        ]:
+            if ToolClass and getattr(config, cfg_attr, True):
+                try:
+                    tool = ToolClass(getattr(config, cfg_attr, {}))
+                    self.tools.append(tool)
+                    self.logger.info(f"Initialized tool: {type(tool).__name__}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to init {type(ToolClass).__name__}: {e}")
 
-        self.file_tools    = init_tool(FileForensicsTools,   'file_forensics',   'File forensics tools')
-        self.classic_tools = init_tool(ClassicStegoTools,     'classic_stego',    'Classic stego tools')
-        self.image_tools   = init_tool(ImageForensicsTools,   'image_forensics',  'Image forensics tools')
-        self.audio_tools   = init_tool(AudioAnalysisTools,    'audio_analysis',   'Audio analysis tools')
-        self.crypto_tools  = init_tool(CryptoAnalysisTools,   'crypto',           'Crypto analysis tools')
+        self.logger.info("StegOrchestrator initialized with tools: %s", 
+                         [type(t).__name__ for t in self.tools])
 
-        if MLStegDetector and getattr(self.config.ml, 'enabled', False):
-            try:
-                self.ml_detector = MLStegDetector(self.config.ml)
-                self.logger.info("ML detector initialized")
-            except Exception as e:
-                self.ml_detector = None
-                self.logger.error(f"ML detector init failed: {e}")
+    async def analyze(self, target: Path, session_id: Any = None):
+        """
+        Analyze a file or all files in a directory.
+        session_id is optional and passed to save contexts.
+        """
+        # Collect files to analyze
+        if target.is_file():
+            files = [target]
         else:
-            self.ml_detector = None
+            files = [p for p in target.rglob('*') if p.is_file()]
 
-        if LLMAnalyzer and getattr(self.config.llm, 'enabled', False):
-            try:
-                self.llm_analyzer = LLMAnalyzer(self.config.llm)
-                self.logger.info("LLM analyzer initialized")
-            except Exception as e:
-                self.llm_analyzer = None
-                self.logger.warning(f"LLM analyzer init failed: {e}")
-        else:
-            self.llm_analyzer = None
-
-        self.cascade_analyzer = init_tool(CascadeAnalyzer, 'orchestrator', 'Cascade analyzer')
-
-    async def _execute_task(self, task: AnalysisTask, session_id: Any = None):
-        tool = getattr(self, task.tool_name)
-        if not tool:
-            self.logger.error(f"Tool '{task.tool_name}' not available")
-            return
-
-        # pick the method on the tool
-        method = getattr(tool, task.method, None)
-        if not method:
-            self.logger.error(f"Method '{task.method}' not found on tool '{task.tool_name}'")
-            return
-
-        try:
-            if asyncio.iscoroutinefunction(method):
-                result = await method(str(task.file_path))
-            else:
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(self.thread_pool, method, str(task.file_path))
-
-            # save findings
-            try:
-                self.db.save_finding(task.file_path, task.tool_name, result)
-            except TypeError:
-                self.db.save_finding(session_id, task.file_path, task.tool_name, result)
-
-        except Exception as e:
-            self.logger.error(f"Task {task.tool_name}.{task.method} failed: {e}")
-
-    async def analyze(self, target: Path, *args):
-        session_id = args[0] if args else None
-        files = [target] if target.is_file() else [p for p in target.rglob('*') if p.is_file()]
+        loop = asyncio.get_running_loop()
         tasks = []
+
         for f in files:
-            tasks.extend(self._schedule_file_tasks(f))
+            # Core file forensic analysis
+            tasks.append(loop.run_in_executor(
+                self.thread_pool, self.file_analyzer.analyze, str(f), session_id
+            ))
+            # Optional tools
+            for tool in self.tools:
+                # Determine entrypoint method
+                method = getattr(tool, 'analyze', None) or getattr(tool, 'run', None)
+                if not method:
+                    self.logger.warning("No entrypoint on %s", type(tool).__name__)
+                    continue
+                # Schedule sync or async
+                if asyncio.iscoroutinefunction(method):
+                    tasks.append(method(str(f), session_id))
+                else:
+                    tasks.append(loop.run_in_executor(
+                        self.thread_pool, method, str(f), session_id
+                    ))
 
-        await asyncio.gather(*(self._execute_task(t, session_id) for t in tasks))
+        # Execute all tasks
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    def _schedule_file_tasks(self, file_path: Path) -> List[AnalysisTask]:
-        tasks = []
-        mapping = [
-            ('file_forensics',   'file_tools'),
-            ('classic_stego',    'classic_tools'),
-            ('image_forensics',  'image_tools'),
-            ('audio_analysis',   'audio_tools'),
-            ('crypto_analysis',  'crypto_tools'),
-            ('ml_detection',     'ml_detector'),
-            ('llm_analysis',     'llm_analyzer'),
-            ('cascade_analysis', 'cascade_analyzer'),
-        ]
-        for method, tool_name in mapping:
-            tool = getattr(self, tool_name)
-            if tool:
-                tasks.append(AnalysisTask(file_path, method, tool_name,
-                                          gpu_required=(tool_name=='ml_detector')))
-        return tasks
+        # Log and save results
+        for res in results:
+            if isinstance(res, Exception):
+                self.logger.error("Analysis task error: %s", res)
+            else:
+                # res expected to be finding or list of findings
+                try:
+                    self.db.save_finding(*res) if isinstance(res, tuple) else None
+                except Exception:
+                    pass
+
+        self.logger.info("All analysis tasks completed")
