@@ -9,7 +9,7 @@ import logging
 import traceback
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, List, Callable
+from typing import Any, List, Callable, Union
 
 from .file_analyzer import FileAnalyzer
 from .database import DatabaseManager
@@ -52,23 +52,23 @@ except ImportError:
 class StegOrchestrator:
     """
     Orchestrates analysis across files, using configured tools and database.
-    Provides a single `analyze(target)` method.
+    Provides a single `analyze(target, session_id)` method returning findings.
     """
     def __init__(self, config: Any, database: DatabaseManager):
         self.config = config
         self.db = database
         self.logger = logging.getLogger(__name__)
-        # optional checkpoint manager
+        # Optional checkpoint manager
         try:
             self.checkpoint = CheckpointManager(getattr(config, 'orchestrator', {}), database)
         except Exception:
             self.checkpoint = None
-        # thread pool
+        # Thread pool
         self.pool = ThreadPoolExecutor(max_workers=getattr(config.orchestrator, 'max_cpu_workers', 4))
-        # core file analyzer
+        # Core file analyzer
         fa_cfg = getattr(config, 'file_forensics', {})
         self.file_analyzer = FileAnalyzer(fa_cfg)
-        # init optional tools
+        # Init optional tools
         self.file_forensics_tool = None
         self.tools: List[Any] = []
         def init_optional(cls, cfg_attr, name):
@@ -88,7 +88,7 @@ class StegOrchestrator:
         init_optional(ClassicStegoTools, 'classic_stego', 'ClassicStegoTools')
         init_optional(ImageForensicsTools, 'image_forensics', 'ImageForensicsTools')
         init_optional(AudioAnalysisTools, 'audio_analysis', 'AudioAnalysisTools')
-        init_optional(CryptoAnalysisTools, 'crypto', 'CryptoAnalysisTools')
+        init_optional(CryptoAnalysisTools, 'crypto_analysis', 'CryptoAnalysisTools')
         init_optional(MLStegDetector, 'ml', 'MLStegDetector')
         init_optional(LLMAnalyzer, 'llm', 'LLMAnalyzer')
         if CascadeAnalyzer:
@@ -102,18 +102,22 @@ class StegOrchestrator:
         self.logger.info("StegOrchestrator ready. FileForensics: %s, Other tools: %s",
                          bool(self.file_forensics_tool), [type(t).__name__ for t in self.tools])
 
-    def analyze(self, target: str) -> None:
+    def analyze(self, target: Union[str, Path], session_id: Any) -> List[Any]:
+        """
+        Entry point for analysis.
+        :param target: file or directory to analyze
+        :param session_id: existing session identifier
+        :return: list of findings
+        """
         path = Path(target)
         try:
-            session_id = asyncio.run(self.db.create_session(str(path)))
-        except Exception:
-            session_id = None
-        try:
-            asyncio.run(self._analyze_async(path, session_id))
+            return asyncio.run(self._analyze_async(path, session_id))
         except Exception as e:
             self.logger.error(f"Orchestration failed: {e}\n{traceback.format_exc()}")
+            return []
 
-    async def _analyze_async(self, target: Path, session_id: Any) -> None:
+    async def _analyze_async(self, target: Path, session_id: Any) -> List[Any]:
+        # Gather all files under target
         files = [target] if target.is_file() else [p for p in target.rglob('*') if p.is_file()]
         loop = asyncio.get_running_loop()
         tasks: List[Any] = []
@@ -131,12 +135,10 @@ class StegOrchestrator:
                     ))
             # other tools
             for tool in self.tools:
-                # skip file forensics
                 if tool is self.file_forensics_tool:
                     continue
                 method = _get_tool_method(tool)
                 if not method:
-                    self.logger.debug("No entrypoint for %s", type(tool).__name__)
                     continue
                 if asyncio.iscoroutinefunction(method):
                     tasks.append(self._invoke_async_tool(method, f, session_id))
@@ -148,14 +150,26 @@ class StegOrchestrator:
                         f,
                         session_id
                     ))
-        # gather and store
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for res in results:
+        # Execute all tasks
+        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Store results and collect findings
+        findings: List[Any] = []
+        for res in raw_results:
             if isinstance(res, Exception):
                 self.logger.error(f"Task error: {res}")
             else:
-                await self._store_result(session_id, res)
+                # Store in DB
+                try:
+                    await self._store_result(session_id, res)
+                except Exception as e:
+                    self.logger.error(f"Store result failed: {e}")
+                # Collect findings
+                if isinstance(res, list):
+                    findings.extend(res)
+                elif isinstance(res, dict) and res.get('type') != 'file':
+                    findings.append(res)
         self.logger.info("Analysis complete for session %s", session_id)
+        return findings
 
     async def _run_file_analysis(self, file_path: Path, session_id: Any) -> Any:
         try:
@@ -185,3 +199,23 @@ class StegOrchestrator:
                 await self.db.store_finding(session_id, finding.get('file_id'), finding)
         else:
             await self.db.store_finding(session_id, result.get('file_id'), result)
+
+# Helper to find tool entrypoint method
+
+def _get_tool_method(tool: Any) -> Callable:
+    # prefer method named 'analyze' or '<tool>_analysis'
+    for name in ('analyze', f'{type(tool).__name__.lower()}_analysis'):
+        if hasattr(tool, name):
+            return getattr(tool, name)
+    return None
+
+# Sync wrapper for non-async tools
+
+def _invoke_tool(method: Callable, f: Path, session_id: Any) -> Any:
+    try:
+        return method(f, session_id)
+    except TypeError:
+        return method(f)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Tool error: {e}")
+        return None
