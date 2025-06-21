@@ -4,10 +4,6 @@ GPU-Powered Deep Learning Analysis with Multiple Model Architectures
 """
 
 import torch
-import os
-# Fix CUDA memory fragmentation
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
-
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms

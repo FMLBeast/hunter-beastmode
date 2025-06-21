@@ -319,7 +319,7 @@ class StegOrchestrator:
             if self.classic_tools and "zsteg_analysis" not in completed_set:
                 tasks.append(AnalysisTask(
                     file_path=file_path,
-                    method="zsteg_analysis",
+                    method="zsteg",
                     tool_name="classic_stego",
                     priority=7
                 ))
@@ -327,7 +327,7 @@ class StegOrchestrator:
             if self.classic_tools and "steghide_extract" not in completed_set:
                 tasks.append(AnalysisTask(
                     file_path=file_path,
-                    method="steghide_extract",
+                    method="steghide",
                     tool_name="classic_stego",
                     priority=6
                 ))

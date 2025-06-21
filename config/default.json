@@ -41,7 +41,9 @@
     "gpu_enabled": true,
     "model_cache_size": 10,
     "load_pretrained": true,
-    "gpu_memory_limit": 8192
+    "gpu_memory_limit": 2048,
+    "batch_size": 8,
+    "max_workers": 1
   },
   "dashboard": {
     "enabled": true,

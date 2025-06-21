@@ -103,41 +103,6 @@ Focus on file size, extension mismatches, and unusual patterns.
 
 Respond with a confidence score (0.0-1.0) and brief explanation."""
 
-    def execute_method(self, method: str, file_path: Path) -> List[Dict[str, Any]]:
-        """Execute LLM method - provides interface for orchestrator"""
-        try:
-            if method in ["analyze", "llm_analysis"]:
-                if not file_path.exists():
-                    return []
-                
-                # Return placeholder since LLM requires API key
-                return [{
-                    "type": "llm_analysis",
-                    "method": method,
-                    "tool_name": "llm_analyzer",
-                    "confidence": 0.0,
-                    "details": "LLM analysis requires API key configuration",
-                    "file_path": str(file_path)
-                }]
-            else:
-                return []
-                
-        except Exception as e:
-            self.logger.error(f"LLM method {method} failed: {e}")
-            return [{
-                "type": "error", 
-                "method": method,
-                "tool_name": "llm_analyzer",
-                "confidence": 0.0,
-                "details": f"LLM analysis failed: {str(e)}",
-                "file_path": str(file_path)
-            }]
-
-    async def analyze_file(self, file_path: Path) -> List[Dict[str, Any]]:
-        """Async analyze file method"""
-        return self.execute_method("analyze", file_path)
-
-
         return prompt
 
     def _parse_llm_response(self, response_text: str, file_path: Path) -> List[Dict[str, Any]]:
