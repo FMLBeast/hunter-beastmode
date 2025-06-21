@@ -36,3 +36,4 @@ output/
 # Docker
 docker-compose.override.yml
 checkpoints/e830a838-3eff-45ca-9b22-3c7daa0ec0c8/d2c42cc6b98064ed.json.gz
+quick_crash_fix.py

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Fixed Orchestrator - Handles async/await properly and integrates with external DatabaseManager
+Robust Orchestrator for StegAnalyzer
+Handles async/await correctly, integrates checkpointing, and tolerates extra init args.
 """
 
 import asyncio
 import logging
-import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
@@ -16,7 +16,7 @@ from .file_analyzer import FileAnalyzer
 from .database import DatabaseManager
 from utils.checkpoint import CheckpointManager
 
-# Tool imports with fallbacks
+# Optional tool imports
 try:
     from tools.file_forensics import FileForensicsTools
 except ImportError:
@@ -73,188 +73,170 @@ class AnalysisTask:
 
 class StegOrchestrator:
     """
-    Orchestrator orchestrates all analysis tools over files/directories
-    Accepts a Config and an external DatabaseManager instance
+    Orchestrates analysis tools over files/directories.
+    Accepts a Config and a DatabaseManager instance (extra args ignored).
     """
 
-    def __init__(self, config, database: DatabaseManager):
+    def __init__(self, config, database: DatabaseManager, *args, **kwargs):
+        # Accept extra args from CLI layer without error
         self.config = config
         self.db = database
         self.logger = logging.getLogger(__name__)
 
-        # Initialize checkpoint manager using orchestrator settings
-        self.checkpoint_manager = CheckpointManager(config.orchestrator, self.db)
+        # Initialize checkpoint manager
+        self.checkpoint_manager = CheckpointManager(config.orchestrator)
 
-        # Thread pool for sync operations
+        # Thread pool for blocking tasks
         self.thread_pool = ThreadPoolExecutor(max_workers=config.orchestrator.max_cpu_workers)
 
-        # Initialize file analyzer
+        # Analyzer and tools
         self.file_analyzer = FileAnalyzer()
-
-        # Initialize tools
         self._initialize_tools()
         self.logger.info("StegOrchestrator initialized")
 
     def _initialize_tools(self):
-        # File forensics
-        self.file_tools = None
+        # Each tool block safely initializes or logs failure
         try:
-            if FileForensicsTools:
-                self.file_tools = FileForensicsTools(self.config.file_forensics)
-                self.logger.info("File forensics tools initialized")
+            self.file_tools = FileForensicsTools(self.config.file_forensics) if FileForensicsTools else None
+            self.logger.info("File forensics tools initialized")
         except Exception as e:
+            self.file_tools = None
             self.logger.error(f"File forensics init failed: {e}")
 
-        # Classic stego
-        self.classic_tools = None
         try:
-            if ClassicStegoTools:
-                self.classic_tools = ClassicStegoTools(self.config.classic_stego)
-                self.logger.info("Classic stego tools initialized")
+            self.classic_tools = ClassicStegoTools(self.config.classic_stego) if ClassicStegoTools else None
+            self.logger.info("Classic stego tools initialized")
         except Exception as e:
+            self.classic_tools = None
             self.logger.warning(f"Classic stego init failed: {e}")
 
-        # Image forensics
-        self.image_tools = None
         try:
-            if ImageForensicsTools:
-                self.image_tools = ImageForensicsTools(self.config.image_forensics)
-                self.logger.info("Image forensics tools initialized")
+            self.image_tools = ImageForensicsTools(self.config.image_forensics) if ImageForensicsTools else None
+            self.logger.info("Image forensics tools initialized")
         except Exception as e:
+            self.image_tools = None
             self.logger.warning(f"Image forensics init failed: {e}")
 
-        # Audio analysis
-        self.audio_tools = None
         try:
-            if AudioAnalysisTools:
-                self.audio_tools = AudioAnalysisTools(self.config.audio_analysis)
-                self.logger.info("Audio analysis tools initialized")
+            self.audio_tools = AudioAnalysisTools(self.config.audio_analysis) if AudioAnalysisTools else None
+            self.logger.info("Audio analysis tools initialized")
         except Exception as e:
+            self.audio_tools = None
             self.logger.warning(f"Audio analysis init failed: {e}")
 
-        # Crypto analysis
-        self.crypto_tools = None
         try:
-            if CryptoAnalysisTools:
-                self.crypto_tools = CryptoAnalysisTools(self.config.crypto)
-                self.logger.info("Crypto analysis tools initialized")
+            self.crypto_tools = CryptoAnalysisTools(self.config.crypto) if CryptoAnalysisTools else None
+            self.logger.info("Crypto analysis tools initialized")
         except Exception as e:
+            self.crypto_tools = None
             self.logger.warning(f"Crypto analysis init failed: {e}")
 
-        # ML detector
-        self.ml_detector = None
         try:
-            if MLStegDetector and getattr(self.config.ml, 'enabled', False):
-                self.ml_detector = MLStegDetector(self.config.ml)
-                self.logger.info("ML detector initialized")
+            self.ml_detector = MLStegDetector(self.config.ml) if MLStegDetector and getattr(self.config.ml, 'enabled', False) else None
+            self.logger.info("ML detector initialized")
         except Exception as e:
+            self.ml_detector = None
             self.logger.error(f"ML detector init failed: {e}")
 
-        # LLM analyzer
-        self.llm_analyzer = None
         try:
-            if LLMAnalyzer and getattr(self.config.llm, 'enabled', False):
-                self.llm_analyzer = LLMAnalyzer(self.config.llm)
-                self.logger.info("LLM analyzer initialized")
+            self.llm_analyzer = LLMAnalyzer(self.config.llm) if LLMAnalyzer and getattr(self.config.llm, 'enabled', False) else None
+            self.logger.info("LLM analyzer initialized")
         except Exception as e:
+            self.llm_analyzer = None
             self.logger.warning(f"LLM analyzer init failed: {e}")
 
-        # Cascade analyzer
-        self.cascade_analyzer = None
         try:
-            if CascadeAnalyzer:
-                self.cascade_analyzer = CascadeAnalyzer(self.config)
-                self.logger.info("Cascade analyzer initialized")
+            self.cascade_analyzer = CascadeAnalyzer(self.config) if CascadeAnalyzer else None
+            self.logger.info("Cascade analyzer initialized")
         except Exception as e:
+            self.cascade_analyzer = None
             self.logger.warning(f"Cascade analyzer init failed: {e}")
 
     async def analyze(self, file_path: Path, session_id: str) -> List[Dict[str, Any]]:
-        """Analyze a single file end-to-end"""
         self.logger.info(f"Starting analysis of {file_path}")
         file_info = await self._get_file_info(file_path)
         file_id = await self.db.add_file(session_id, str(file_path), file_info)
 
         tasks = await self._create_analysis_plan(file_path, file_info)
-        results = await self._execute_analysis_tasks(tasks, session_id, file_id)
+        results = await self._execute_analysis_tasks(tasks)
         final = await self._post_process_results(results)
         self.logger.info(f"Analysis complete: {len(final)} findings")
         return final
 
     async def _get_file_info(self, file_path: Path) -> Dict[str, Any]:
-        try:
-            return await asyncio.get_event_loop().run_in_executor(
-                self.thread_pool,
-                self.file_analyzer.analyze_file,
-                file_path
-            )
-        except Exception as e:
-            self.logger.error(f"Get file info failed: {e}")
-            return {'file_size': file_path.stat().st_size, 'file_type': 'unknown', 'mime_type': 'application/octet-stream'}
+        return await asyncio.get_event_loop().run_in_executor(
+            self.thread_pool, self.file_analyzer.analyze_file, file_path
+        )
 
     async def _create_analysis_plan(self, file_path: Path, file_info: Dict[str, Any]) -> List[AnalysisTask]:
         tasks: List[AnalysisTask] = []
-        ftype = file_info.get('file_type','').lower()
-        # Basic magic
-        tasks.append(AnalysisTask(file_path, 'magic_analysis', 'file_analyzer', priority=1))
-        # Entropy
+        ftype = file_info.get('mime_type','').lower()
+        # always magic
+        tasks.append(AnalysisTask(file_path, 'magic_analysis', 'file_analyzer'))
+        # entropy if crypto
         if self.crypto_tools:
-            tasks.append(AnalysisTask(file_path, 'entropy_analysis', 'crypto_analysis', dependencies=['magic_analysis'], priority=2))
-        # Type-specific
+            tasks.append(AnalysisTask(file_path, 'entropy_analysis', 'crypto_analysis', dependencies=['magic_analysis']))
+        # type-specific
         if 'image' in ftype:
             if self.classic_tools:
                 for m in ['steghide_extract','zsteg_analysis','binwalk_extract']:
-                    tasks.append(AnalysisTask(file_path, m, 'classic_stego', dependencies=['magic_analysis'], priority=2))
+                    tasks.append(AnalysisTask(file_path, m, 'classic_stego', dependencies=['magic_analysis']))
             if self.image_tools:
                 for m in ['lsb_analysis','noise_analysis','metadata_extraction']:
-                    tasks.append(AnalysisTask(file_path, m, 'image_forensics', dependencies=['magic_analysis'], priority=2))
+                    tasks.append(AnalysisTask(file_path, m, 'image_forensics', dependencies=['magic_analysis']))
         elif 'audio' in ftype:
             if self.audio_tools:
                 for m in ['spectral_analysis','lsb_analysis','echo_hiding_detection']:
-                    tasks.append(AnalysisTask(file_path, m, 'audio_analysis', dependencies=['magic_analysis'], priority=2))
+                    tasks.append(AnalysisTask(file_path, m, 'audio_analysis', dependencies=['magic_analysis']))
         else:
             if self.file_tools:
-                tasks.append(AnalysisTask(file_path, 'signature', 'file_forensics', dependencies=['magic_analysis'], priority=2))
+                tasks.append(AnalysisTask(file_path, 'signature', 'file_forensics', dependencies=['magic_analysis']))
         # ML
         if self.ml_detector:
-            tasks.append(AnalysisTask(file_path, 'ml_detection', 'ml_detector', dependencies=['magic_analysis'], gpu_required=True, priority=3))
+            tasks.append(AnalysisTask(file_path, 'ml_detection', 'ml_detector', gpu_required=True))
         # LLM
         if self.llm_analyzer:
-            tasks.append(AnalysisTask(file_path, 'llm_analysis', 'llm_analyzer', dependencies=['magic_analysis'], priority=4))
+            tasks.append(AnalysisTask(file_path, 'llm_analysis', 'llm_analyzer'))
         return tasks
 
-    async def _execute_analysis_tasks(self, tasks: List[AnalysisTask], session_id: str, file_id: str) -> List[Dict[str, Any]]:
-        results: List[Dict[str, Any]] = []
+    async def _execute_analysis_tasks(self, tasks: List[AnalysisTask]) -> List[Dict[str, Any]]:
         sem = asyncio.Semaphore(self.config.orchestrator.max_concurrent_files)
+        results: List[Dict[str, Any]] = []
 
         async def worker(task: AnalysisTask):
             async with sem:
-                # wait deps
+                # wait dependencies
                 for dep in task.dependencies:
                     while not any(r['method']==dep for r in results):
                         await asyncio.sleep(0.1)
-                try:
-                    res = await self._execute_task(task)
-                    if res:
-                        if isinstance(res, list):
-                            results.extend(res)
-                        else:
-                            results.append(res)
-                except Exception as e:
-                    self.logger.error(f"Task {task.method} failed: {e}")
+                res = await self._execute_task(task)
+                if res:
+                    if isinstance(res, list):
+                        results.extend(res)
+                    else:
+                        results.append(res)
 
         await asyncio.gather(*(worker(t) for t in tasks), return_exceptions=True)
         return results
 
     async def _execute_task(self, task: AnalysisTask) -> Optional[Any]:
         self.logger.info(f"Executing {task.method} via {task.tool_name}")
-        # ... implement sync vs async dispatch as in provided fixed code ...
-        # Omitted here for brevity
-        return []
+        # dispatch based on tool_name
+        tool = getattr(self, f"{task.tool_name}", None)
+        if not tool:
+            return None
+        func = getattr(tool, task.method, None)
+        if not func:
+            return None
+        if asyncio.iscoroutinefunction(func):
+            return await func(task.file_path)
+        else:
+            return await asyncio.get_event_loop().run_in_executor(self.thread_pool, func, task.file_path)
 
     async def _post_process_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        seen=set(); unique=[]
+        seen = set(); unique=[]
         for r in results:
-            key=(r.get('type'),r.get('method'),r.get('confidence',0))
+            key=(r.get('tool'),r.get('method'),r.get('confidence',0))
             if key not in seen:
                 seen.add(key); unique.append(r)
         return sorted(unique, key=lambda x:x.get('confidence',0), reverse=True)
