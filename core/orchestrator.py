@@ -126,39 +126,32 @@ class StegOrchestrator:
         files = [target] if target.is_file() else list(target.rglob('*'))
         findings: List[Any] = []
         for f in files:
-            # Skip directories
             if f.is_dir():
                 continue
-            # 1) File analysis and database record
             try:
                 info = await self.file_analyzer.analyze_file(f)
                 file_id = await self.db.add_file(session_id, str(f), info)
             except Exception as e:
                 self.logger.error(f"File analysis error for {f}: {e}")
                 continue
-            # 2) Tool invocations per file
             tool_tasks = []
             loop = asyncio.get_running_loop()
-            # File forensics
             if self.file_forensics_tool:
                 for m in self.file_forensics_tool.get_supported_methods():
                     tool_tasks.append(
                         loop.run_in_executor(self.pool,
-                            lambda method=m: self.file_forensics_tool.execute_method(method, f)
+                            lambda method=m: _wrap_sync(method, self.file_forensics_tool, f, session_id)
                         )
                     )
-            # Other tools
             for tool in self.tools:
-                if tool is self.file_forensics_tool:
-                    continue
                 method = _get_tool_method(tool)
                 if not method:
                     continue
                 if asyncio.iscoroutinefunction(method):
-                    tool_tasks.append(_wrap_async(method, tool, f, session_id))
+                    task = _wrap_async(method, tool, f, session_id)
                 else:
-                    tool_tasks.append(loop.run_in_executor(self.pool, _wrap_sync, method, tool, f, session_id))
-            # Gather and store results
+                    task = loop.run_in_executor(self.pool, _wrap_sync, method, tool, f, session_id)
+                tool_tasks.append(task)
             if tool_tasks:
                 raw = await asyncio.gather(*tool_tasks, return_exceptions=True)
                 for res in raw:
@@ -169,9 +162,8 @@ class StegOrchestrator:
                     for item in items:
                         if not item or not isinstance(item, dict):
                             continue
-                        # Attach file_id if missing
-                        if 'file_id' not in item:
-                            item['file_id'] = file_id
+                        item.setdefault('file_id', file_id)
+                        item.setdefault('tool_name', type(item.get('tool')).__name__ if item.get('tool') else item.get('tool_name', None) or 'UnknownTool')
                         await self._store_result(session_id, item)
                         if item.get('type') != 'file':
                             findings.append(item)
@@ -185,6 +177,9 @@ class StegOrchestrator:
         if fid is None:
             self.logger.warning("Skipping result without file_id: %s", result)
             return
+        # Ensure tool_name present
+        if 'tool_name' not in result or not result['tool_name']:
+            result['tool_name'] = 'UnknownTool'
         await self.db.store_finding(session_id, fid, result)
 
 # Helpers
@@ -197,18 +192,35 @@ def _get_tool_method(tool: Any) -> Callable:
 
 async def _wrap_async(method: Callable, tool: Any, f: Path, session_id: Any) -> Any:
     try:
-        return await method(f, session_id)
+        res = await method(f, session_id)
     except TypeError:
-        return await method(f)
+        res = await method(f)
     except Exception as e:
         logging.getLogger(__name__).error(f"Async tool error: {e}")
         return []
+    # annotate result(s)
+    if isinstance(res, list):
+        for item in res:
+            if isinstance(item, dict):
+                item['tool_name'] = type(tool).__name__
+        return res
+    if isinstance(res, dict):
+        res['tool_name'] = type(tool).__name__
+    return res
 
 def _wrap_sync(method: Callable, tool: Any, f: Path, session_id: Any) -> Any:
     try:
-        return method(f, session_id)
+        res = method(f, session_id)
     except TypeError:
-        return method(f)
+        res = method(f)
     except Exception as e:
         logging.getLogger(__name__).error(f"Sync tool error: {e}")
         return []
+    if isinstance(res, list):
+        for item in res:
+            if isinstance(item, dict):
+                item['tool_name'] = type(tool).__name__
+        return res
+    if isinstance(res, dict):
+        res['tool_name'] = type(tool).__name__
+    return res
